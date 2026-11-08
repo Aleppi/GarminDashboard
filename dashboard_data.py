@@ -1278,8 +1278,9 @@ def _has_interval_structure(client, activity: dict, kind: str) -> bool:
     _classify_session_type). Running: a large sustained pace gap that HR
     follows (pace alone if there's no HR stream). Cycling: a large gap
     across manually-pressed laps, which activity_manual_lap_pace_gap
-    already requires HR to confirm. No usable data means no evidence, so
-    False."""
+    already requires HR to confirm, or laps alternating work/rest power
+    (activity_lap_power_structure — catches hill repeats, where speed is
+    backwards). No usable data means no evidence, so False."""
     if kind == "running":
         gap = activity_sustained_pace_gap(client, activity)
         if gap is None or gap < PACE_INTERVAL_THRESHOLDS["running"]:
@@ -1288,7 +1289,9 @@ def _has_interval_structure(client, activity: dict, kind: str) -> bool:
         return hr_gap is None or hr_gap >= _HR_FOLLOWS_PACE_MIN_BPM
     if kind == "cycling":
         gap = activity_manual_lap_pace_gap(client, activity)
-        return gap is not None and gap >= PACE_INTERVAL_THRESHOLDS["cycling"]
+        if gap is not None and gap >= PACE_INTERVAL_THRESHOLDS["cycling"]:
+            return True
+        return activity_lap_power_structure(client, activity)
     return False
 
 _PLAN_KIND_ALIASES = {
@@ -1643,6 +1646,108 @@ def activity_manual_lap_pace_gap(client, activity: dict) -> Optional[float]:
         return None
 
     return (slow_pace - fast_pace) / mean_pace
+
+
+# Power-based lap check for rides (activity_lap_power_structure). Speed is
+# the wrong effort signal for hill repeats: the work is the slow climb and
+# the recovery is the fast descent, so activity_manual_lap_pace_gap's HR
+# check sees HR *fall* on the fastest laps and rejects it — and climb and
+# descent laps on the same road are near-identical in distance, so
+# _laps_look_manually_pressed misses them too (the 2026-11-08 4x hill
+# repeat: CV 0.425). Power doesn't care about terrain: work laps there sat
+# at 239-253W, descents at 8-9W.
+#
+# Work laps are within _LAP_POWER_WORK_FRACTION of the 80th-percentile lap
+# power, rest laps at or under _LAP_POWER_REST_FRACTION of it; laps in
+# between are ignored. Calibrated on ~6 months of one athlete's rides with
+# power: the lapped interval sessions (flat 5x3min 288-332W / 10-17W rest,
+# 3x30min ~235W / 78-125W rest, 2x20min ~215W / 132W rest, the hill
+# repeat) all show >= 2 work blocks split by rest laps with HR dropping
+# 17-35bpm; steady/hilly rides under 5km auto-lap are excluded outright
+# (_laps_look_auto_lapped) since an auto-lap's power is just whatever the
+# terrain did in that 5km.
+_LAP_POWER_WORK_FRACTION = 0.8
+_LAP_POWER_REST_FRACTION = 0.65
+_MIN_LAP_POWER_WORK_BLOCKS = 2
+_MIN_LAP_POWER_DURATION_S = 30  # drop pause/blip laps before judging power
+# Garmin auto-lap distances are exact (5000m, 5000m, ...) apart from the
+# trailing partial lap; manually-pressed laps practically never coincide
+# this closely more than a couple of times.
+_AUTO_LAP_DISTANCE_TOLERANCE = 0.01
+
+
+def _laps_look_auto_lapped(laps: list[dict]) -> bool:
+    """Whether at least half the laps share one distance (within
+    _AUTO_LAP_DISTANCE_TOLERANCE) — the auto-lap-by-distance signature."""
+    distances = [lap.get("distance") or 0 for lap in laps if (lap.get("distance") or 0) > 0]
+    if len(distances) < 2:
+        return False
+    most_alike = max(
+        sum(1 for other in distances if abs(other - d) <= d * _AUTO_LAP_DISTANCE_TOLERANCE)
+        for d in distances
+    )
+    return most_alike >= 2 and most_alike * 2 >= len(distances)
+
+
+def activity_lap_power_structure(client, activity: dict) -> bool:
+    """Whether a ride's own laps alternate between work and recovery power
+    — at least _MIN_LAP_POWER_WORK_BLOCKS separate runs of work laps, each
+    split by a rest lap, with HR on those rest laps at least
+    _MANUAL_LAP_HR_DROP_BPM below the work laps when HR is recorded. Unlike
+    activity_manual_lap_pace_gap this catches hill repeats (see the comment
+    above _LAP_POWER_WORK_FRACTION). False when the ride has no lap power
+    or was auto-lapped."""
+    activity_id = activity.get("activityId")
+    if activity_id is None:
+        return False
+    splits = fetch_activity_splits(client, activity_id)
+    if not splits:
+        return False
+    laps = splits.get("lapDTOs") or []
+    if _laps_look_auto_lapped(laps):
+        return False
+    powered = [
+        lap
+        for lap in laps
+        if lap.get("averagePower") is not None and (lap.get("duration") or 0) >= _MIN_LAP_POWER_DURATION_S
+    ]
+    if len(powered) < _MIN_LAP_POWER_WORK_BLOCKS * 2 - 1:
+        return False
+    powers = sorted(lap["averagePower"] for lap in powered)
+    reference = powers[int(len(powers) * 0.80)]
+    if not reference:
+        return False
+
+    # Collapse into alternating work/rest blocks, skipping in-between laps.
+    blocks: list[tuple[str, list[dict]]] = []
+    for lap in powered:
+        power = lap["averagePower"]
+        if power >= reference * _LAP_POWER_WORK_FRACTION:
+            kind = "work"
+        elif power <= reference * _LAP_POWER_REST_FRACTION:
+            kind = "rest"
+        else:
+            continue
+        if blocks and blocks[-1][0] == kind:
+            blocks[-1][1].append(lap)
+        else:
+            blocks.append((kind, [lap]))
+    # Rest before the first or after the last work block is warm-up/cool-
+    # down, not recovery between reps.
+    while blocks and blocks[0][0] == "rest":
+        blocks.pop(0)
+    while blocks and blocks[-1][0] == "rest":
+        blocks.pop()
+    work_laps = [lap for kind, group in blocks if kind == "work" for lap in group]
+    rest_laps = [lap for kind, group in blocks if kind == "rest" for lap in group]
+    if sum(1 for kind, _ in blocks if kind == "work") < _MIN_LAP_POWER_WORK_BLOCKS:
+        return False
+
+    work_hr = [lap["averageHR"] for lap in work_laps if lap.get("averageHR")]
+    rest_hr = [lap["averageHR"] for lap in rest_laps if lap.get("averageHR")]
+    if work_hr and rest_hr and statistics.mean(work_hr) - statistics.mean(rest_hr) < _MANUAL_LAP_HR_DROP_BPM:
+        return False
+    return True
 
 
 def get_activity_laps(client, activity_id: Any) -> list[dict]:
