@@ -1269,6 +1269,15 @@ PACE_INTERVAL_THRESHOLDS = {"running": 0.25, "cycling": 0.35}
 # trail runs +1 to +14, steady road runs and races mostly under +15. Same
 # idea as the cycling check's _MANUAL_LAP_HR_DROP_BPM, on the stream rather
 # than on laps.
+#
+# Raw speed gets uphill repeats backwards, though: the hard rep is the slow
+# climb and the recovery the fast jog down, so HR *falls* on the fastest
+# stretches and the HR check rejects it. Both stream checks therefore use
+# Garmin's grade-adjusted speed when the activity has it (see
+# _speed_metric_key), which scores a hard climb as fast. On the year of
+# runs above with that stream, the interval runs kept their scores
+# (0.59/+31, 0.69/+29) and the trail runs dropped to 0.36-0.47 with HR
+# still not following (+3 to +14), so nothing changed classification.
 _HR_FOLLOWS_PACE_MIN_BPM = 20
 
 
@@ -1445,10 +1454,17 @@ _SUSTAINED_PACE_MIN_SPEED = 1.0  # m/s -- below this treated as stopped (traffic
 _SUSTAINED_PACE_MIN_BUCKETS = 10
 
 
+def _speed_metric_key(index: dict) -> str:
+    """Which per-second speed stream to judge effort by: grade-adjusted
+    when Garmin recorded it (runs since ~March 2026 here), raw otherwise —
+    see the comment above _HR_FOLLOWS_PACE_MIN_BPM."""
+    return "directGradeAdjustedSpeed" if index.get("directGradeAdjustedSpeed") is not None else "directSpeed"
+
+
 def activity_sustained_pace_gap(client, activity: dict) -> Optional[float]:
     """How much faster an activity's sustained hard efforts are than its
-    sustained easier ones, from Garmin's raw per-second pace stream rather
-    than lap markers — so it still catches real interval structure even
+    sustained easier ones, from Garmin's per-second pace stream (grade-
+    adjusted when available, see _speed_metric_key) rather than lap markers — so it still catches real interval structure even
     when auto-lap is set coarser than the actual work/rest cycle (e.g. a 1km
     auto-lap covering an 800m rep + 200m jog as one blended lap), which
     lap-based detection is blind to.
@@ -1473,8 +1489,8 @@ def activity_sustained_pace_gap(client, activity: dict) -> Optional[float]:
     if not details:
         return None
     mdesc = details.get("metricDescriptors") or []
-    speed_idx = next((m.get("metricsIndex") for m in mdesc if m.get("key") == "directSpeed"), None)
-    ts_idx = next((m.get("metricsIndex") for m in mdesc if m.get("key") == "directTimestamp"), None)
+    index = {m.get("key"): m.get("metricsIndex") for m in mdesc}
+    speed_idx, ts_idx = index.get(_speed_metric_key(index)), index.get("directTimestamp")
     if speed_idx is None or ts_idx is None:
         return None
 
@@ -1528,7 +1544,8 @@ def activity_hr_follows_pace_gap(client, activity: dict) -> Optional[float]:
         return None
     mdesc = details.get("metricDescriptors") or []
     index = {m.get("key"): m.get("metricsIndex") for m in mdesc}
-    speed_idx, hr_idx, ts_idx = index.get("directSpeed"), index.get("directHeartRate"), index.get("directTimestamp")
+    speed_idx = index.get(_speed_metric_key(index))
+    hr_idx, ts_idx = index.get("directHeartRate"), index.get("directTimestamp")
     if speed_idx is None or hr_idx is None or ts_idx is None:
         return None
 
