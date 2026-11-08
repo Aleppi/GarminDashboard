@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Training Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Mono:wght@400;700&family=Zilla+Slab:wght@500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ asset_version('css/style.css') }}">
+<script>
+  // Applied synchronously, before first paint, so there's no flash of the
+  // default theme before switching to a saved one.
+  (function () {
+    try {
+      var saved = localStorage.getItem('trainstate-theme');
+      if (saved && saved !== 'default') document.documentElement.setAttribute('data-theme', saved);
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+<div class="contour-bg" aria-hidden="true"></div>
+<select id="themeSwitcher" aria-label="Dashboard theme">
+  <option value="default">Panel</option>
+  <option value="chrono">Chrono</option>
+  <option value="lab">Lab</option>
+  <option value="bloom">Bloom</option>
+</select>
+<div class="wrap">
+
+  <div id="errorBanner" class="error-banner" style="display:none;"></div>
+
+  <header class="hero">
+    <div class="eyebrow"><span id="eyebrowLocation">Training Dashboard</span> <span class="badge" id="liveBadge">Loading…</span></div>
+    <div class="hero-grid">
+      <div class="hero-number">
+        <div class="hero-figure" id="heroFigure">—</div>
+        <div class="hero-label">Readiness now</div>
+      </div>
+      <div class="hero-status" id="heroStatusBlock" style="display:none;">
+        <div class="hero-status-figure" id="heroStatusValue">—</div>
+        <div class="hero-label">Training status</div>
+      </div>
+      <div class="hero-meta">
+        <div class="hero-date" id="heroDate"></div>
+        <div class="hero-context" id="heroContext"></div>
+      </div>
+    </div>
+
+    <div class="ridge-wrap" id="ridgeWrap">
+      <div class="ridge-scroll" id="ridgeScroll">
+        <svg id="ridgeSvg" viewBox="0 0 1000 280" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="ctlFillGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--gold)" stop-opacity="0.32"/>
+              <stop offset="100%" stop-color="var(--gold)" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path id="ctlArea" fill="url(#ctlFillGrad)" stroke="none" opacity="0"></path>
+          <path id="ctlLine" fill="none" stroke="var(--gold)" stroke-width="2.5" pathLength="1000" class="draw-line"></path>
+          <path id="atlLine" fill="none" stroke="var(--teal)" stroke-width="1.5" stroke-dasharray="9 6" opacity="0" style="animation:fadeInLine 1s ease forwards;animation-delay:.9s;"></path>
+          <g id="raceFlags"></g>
+          <circle id="todayDot" r="5" fill="var(--ink)" stroke="var(--bg)" stroke-width="2"></circle>
+        </svg>
+      </div>
+      <div class="ridge-scroll-hint" id="ridgeScrollHint">← scroll to pan · scroll wheel to zoom</div>
+      <div class="ridge-legend">
+        <span><i class="swatch" style="background:var(--gold)"></i>CTL — fitness (42d)</span>
+        <span><i class="swatch" style="background:var(--teal);border-top:2px dashed var(--teal);height:0"></i>ATL — fatigue (7d)</span>
+        <span id="raceLegend" style="display:none;">🚩 race day</span>
+        <span>● today</span>
+      </div>
+      <div class="ridge-caption" id="ridgeCaption">Hover for exact CTL/ATL/TSB.</div>
+      <div class="chart-tip" id="chartTip"></div>
+    </div>
+  </header>
+
+  <div class="panels-grid">
+
+    <!-- TRAINING LOAD -->
+    <section class="panel">
+      <h2>Training Load</h2>
+      <div class="stat-grid">
+        <div class="stat-tile"><div class="v gold" id="ctlVal">—</div><div class="l">CTL<span class="help-mark" data-tooltip="Chronic Training Load — a ~42-day rolling average of your training load. Tracks overall fitness: it rises slowly as you build a base and falls slowly when you back off.">?</span></div><div class="d">fitness · 42d</div></div>
+        <div class="stat-tile"><div class="v" id="atlVal">—</div><div class="l">ATL<span class="help-mark" data-tooltip="Acute Training Load — a ~7-day rolling average of your training load. Tracks short-term fatigue: it reacts quickly to a hard week or a rest week.">?</span></div><div class="d">fatigue · 7d</div></div>
+        <div class="stat-tile"><div class="v teal" id="tsbVal">—</div><div class="l">TSB<span class="help-mark" data-tooltip="Training Stress Balance = CTL minus ATL. Positive means you're fresher than your fitness level would suggest (good for racing/hard efforts); negative means fatigue is currently outweighing fitness (typical mid hard-training-block).">?</span></div><div class="d" id="tsbLabel">&nbsp;</div></div>
+        <div class="stat-tile"><div class="v" id="acwrVal">—</div><div class="l">ACWR<span class="help-mark" data-tooltip="Acute:Chronic Workload Ratio = ATL divided by CTL. A load-management/injury-risk signal: too high means load has ramped up faster than your fitness base supports; too low means you're training well under what your fitness could handle. Roughly 0.8-1.3 is considered the sweet spot.">?</span></div><div class="d" id="acwrLabel">&nbsp;</div></div>
+      </div>
+
+      <div id="balanceRows"></div>
+
+      <div class="stat-grid three" id="vo2StatGrid">
+        <div class="stat-tile expandable" id="vo2RunTile" data-metric="vo2_run" role="button" tabindex="0" aria-expanded="false" aria-controls="metricChartPanel"><div class="v" id="vo2RunVal">—</div><div class="l">VO2 Run<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="vo2RunLabel">current</div></div>
+        <div class="stat-tile expandable" id="vo2BikeTile" data-metric="vo2_bike" role="button" tabindex="0" aria-expanded="false" aria-controls="metricChartPanel"><div class="v" id="vo2BikeVal">—</div><div class="l">VO2 Bike<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="vo2BikeLabel">current</div></div>
+        <div class="stat-tile expandable" id="enduranceTile" data-metric="endurance" role="button" tabindex="0" aria-expanded="false" aria-controls="metricChartPanel"><div class="v gold" id="enduranceVal">—</div><div class="l">Endurance Score<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="enduranceLabel"></div></div>
+      </div>
+
+      <!-- Shared expand-below panel for whichever of the three tiles above
+           is open; only one at a time (see toggleMetricChart). -->
+      <div class="metric-chart" id="metricChartPanel" style="display:none;">
+        <div class="mc-head">
+          <span class="mc-title" id="metricChartTitle"></span>
+          <span class="mc-meta" id="metricChartMeta"></span>
+        </div>
+        <!-- Plot and tooltip are siblings: the plot's innerHTML is replaced
+             on every render, which would otherwise destroy the tooltip. -->
+        <div class="mc-body">
+          <div id="metricChartPlot"></div>
+          <div class="mc-tip" id="metricChartTip" style="display:none;"></div>
+        </div>
+      </div>
+
+      <table class="predict" id="predictTable">
+        <tr><th>5K</th><td id="predict5k">—</td></tr>
+        <tr><th>10K</th><td id="predict10k">—</td></tr>
+        <tr><th>Half Marathon</th><td id="predictHalf">—</td></tr>
+        <tr><th>Marathon</th><td id="predictMarathon">—</td></tr>
+      </table>
+      <div class="note-line" style="margin-top:8px;margin-bottom:0;" id="hillScoreNote"></div>
+    </section>
+
+    <!-- VITALS -->
+    <section class="panel">
+      <h2>Vitals</h2>
+      <div class="rf-header">Training Readiness<span class="help-mark" data-tooltip="Garmin's Training Readiness score (0-100) — how prepared your body is to train right now. Blends sleep quality, HRV status, recovery time since your last session, recent sleep history, acute:chronic training load, and stress. Shown at wake and again now, so you can see how it's shifted through the day.">?</span></div>
+      <div class="readiness-flow">
+        <div class="rf-block">
+          <div class="rf-score mod" id="wakeScore">—</div>
+          <div class="rf-tag" id="wakeTag"></div>
+          <div class="rf-time" id="wakeTime"></div>
+        </div>
+        <div class="rf-arrow">→</div>
+        <div class="rf-block">
+          <div class="rf-score mod" id="latestScore">—</div>
+          <div class="rf-tag" id="latestTag"></div>
+          <div class="rf-time" id="latestTime"></div>
+        </div>
+      </div>
+
+      <div id="factorRows"></div>
+
+      <div class="mini-stats">
+        <div class="mini-stat"><div class="v" id="fitnessAgeVal">—</div><div class="l">Fitness Age</div><div class="d" id="fitnessAgeDetail"></div></div>
+        <div class="mini-stat"><div class="v" id="rhrVal">—</div><div class="l">Resting HR</div><div class="d" id="rhrDetail"></div></div>
+        <div class="mini-stat sleep-box" id="sleepBox" role="button" tabindex="0" aria-expanded="false" aria-controls="sleepStages">
+          <div class="v" id="sleepVal">—</div><div class="l">Last Sleep<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="sleepDetail"></div>
+          <div class="sleep-stages" id="sleepStages" hidden></div>
+        </div>
+        <div class="mini-stat"><div class="v" id="batteryVal">—</div><div class="l">Body Battery</div><div class="d" id="batteryDetail"></div></div>
+      </div>
+
+      <div class="gap-callout" id="gapCallout" style="display:none;"></div>
+    </section>
+  </div>
+
+  <!-- WAYPOINTS -->
+  <div class="panels-grid waypoint-grid">
+    <section class="panel last-waypoint">
+      <h2>Last Activity</h2>
+      <div class="wp-title" id="lastActivityTitle">—</div>
+      <div class="wp-window" id="lastActivityWindow"></div>
+      <div class="wp-body" id="lastActivityBody"></div>
+      <label class="review-label" for="activityReview">How did it feel?</label>
+      <textarea id="activityReview" class="review-box" rows="5" placeholder="e.g. clean throughout, no tightness / slight pull around km 3 / felt normal but stiff on cooldown..."></textarea>
+      <div class="review-actions">
+        <button id="saveReviewBtn" type="button">Save note</button>
+        <span id="reviewStatus"></span>
+      </div>
+    </section>
+
+    <section class="panel next-waypoint">
+      <h2>Next Activity</h2>
+      <div class="wp-window" id="nextWaypointWindow" style="display:none;"></div>
+      <div class="wp-title" id="nextSessionPrimary">—</div>
+      <div class="wp-body" id="nextWaypointReasoning" style="display:none;"></div>
+      <div class="review-label" id="nextSessionAltLabel" style="margin:14px 0 6px;display:none;">Later this week — a different session, not the same day:</div>
+      <ul class="wp-list" id="nextSessionAlt"></ul>
+      <div class="wp-alt" id="nextWaypointNotesWrap">
+        <div class="review-label" style="margin:0 0 8px;">Notes</div>
+        <ul class="wp-list" id="nextWaypointNotesList"></ul>
+      </div>
+    </section>
+  </div>
+
+  <!-- RACE PLAN -->
+  <section class="panel race-plan" id="racePlanPanel" style="display:none;">
+    <h2>Training Plan <span class="tag" id="racePlanTag"></span></h2>
+    <div class="rp-week-note" id="racePlanWeekNote" style="display:none;"></div>
+    <div class="rp-week" id="racePlanWeek"></div>
+  </section>
+
+  <!-- ACTIVITY CALENDAR -->
+  <section class="panel logpanel" id="calendarPanel">
+    <h2>Activity Calendar <span class="tag" id="calendarTag">Garmin</span></h2>
+    <div class="cal-toolbar">
+      <button class="cal-nav-btn" id="calPrevBtn" type="button" aria-label="Previous month">&lsaquo;</button>
+      <span class="cal-month-label" id="calMonthLabel"></span>
+      <button class="cal-nav-btn" id="calNextBtn" type="button" aria-label="Next month">&rsaquo;</button>
+    </div>
+    <div class="cal-weekdays">
+      <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div class="cal-day-detail" id="calDayDetail" style="display:none;">
+      <div class="cal-day-detail-label" id="calDayDetailLabel"></div>
+      <div class="log-scroll">
+        <table class="log">
+          <thead>
+            <tr><th>Session</th><th>Distance</th><th>Duration</th><th>Pace / Speed</th><th>Avg HR</th><th>Elev+</th><th>Cal</th></tr>
+          </thead>
+          <tbody id="calDayDetailBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Source: Garmin Connect. Race predictions, VO2 max, endurance/hill scores per Garmin's own models.
+    <div class="refresh-box">
+      <span class="refresh-label" id="lastUpdatedLabel">Not loaded yet</span>
+      <button id="refreshBtn" type="button">Refresh</button>
+    </div>
+  </footer>
+</div>
+
+<div class="help-tooltip" id="helpTooltip" role="tooltip"></div>
+
+<script src="{{ url_for('static', filename='js/dashboard.js') }}?v={{ asset_version('js/dashboard.js') }}"></script>
+</body>
+</html>

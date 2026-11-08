@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify · Training Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<style>
+  .login-wrap{
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  .login-card{
+    width:100%;max-width:360px;background:var(--panel);border:1px solid var(--line);
+    border-radius:4px;padding:28px 26px;
+  }
+  .login-title{
+    font-family:var(--font-display);font-weight:700;font-size:24px;color:var(--ink);
+    margin:0 0 4px;
+  }
+  .login-sub{font-size:12.5px;color:var(--ink-dim);margin-bottom:22px;line-height:1.5;}
+  .field{margin-bottom:16px;}
+  .field label{display:block;font-size:12.5px;color:var(--ink-dim);margin-bottom:6px;}
+  .field input{
+    width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:3px;
+    color:var(--ink);font-family:var(--font-mono);font-size:16px;letter-spacing:.1em;
+    text-align:center;padding:10px 12px;
+  }
+  .field input:focus{outline:none;border-color:var(--teal);}
+  .login-error{
+    border:1px solid var(--rust);background:var(--rust-soft);border-radius:3px;
+    padding:10px 12px;font-size:13px;color:var(--rust-text);margin-bottom:16px;
+  }
+  #loginBtn{
+    width:100%;font-family:var(--font-mono);font-size:13px;background:var(--gold-soft);
+    border:1px solid var(--gold);color:var(--gold);padding:10px 14px;border-radius:3px;
+    cursor:pointer;transition:background .15s,color .15s;
+  }
+  #loginBtn:hover{background:var(--gold);color:#12181A;}
+  .back-link{margin-top:18px;font-size:12.5px;color:var(--ink-faint);text-align:center;}
+  .back-link a{color:var(--teal-text);}
+</style>
+</head>
+<body>
+<div class="contour-bg" aria-hidden="true"></div>
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="login-title">Verify with Garmin</div>
+    <div class="login-sub">Garmin sent your account a verification code. Enter it below to finish signing in.</div>
+
+    {% if error %}
+    <div class="login-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('login_mfa') }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <div class="field">
+        <label for="mfa_code">MFA code</label>
+        <input type="text" id="mfa_code" name="mfa_code" inputmode="numeric" autocomplete="one-time-code" required autofocus>
+      </div>
+      <button id="loginBtn" type="submit">Verify</button>
+    </form>
+
+    <div class="back-link"><a href="{{ url_for('login') }}">Start over</a></div>
+  </div>
+</div>
+</body>
+</html>

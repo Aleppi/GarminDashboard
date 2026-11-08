@@ -1,0 +1,588 @@
+  :root{
+    --bg:#12181A;
+    --panel:#1B2224;
+    --panel-2:#212A2C;
+    --line:#2B3436;
+    --ink:#EDEAE0;
+    --ink-dim:#9BA39C;
+    --ink-faint:#7E8983;
+    --gold:#C98A2E;
+    --gold-soft:rgba(201,138,46,0.14);
+    --teal:#5D9AA0;
+    --teal-text:#8FC3C7;
+    --teal-soft:rgba(93,154,160,0.14);
+    --rust:#B0503A;
+    --rust-text:#D98A6E;
+    --rust-soft:rgba(176,80,58,0.10);
+    --moss:#8CA97E;
+    --violet:#9A7FBF; --violet-soft:rgba(154,127,191,0.14);
+    --font-display:'Big Shoulders Display','Arial Narrow',sans-serif;
+    --font-body:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;
+    --font-mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+    --bg-pattern:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='200' viewBox='0 0 400 200'%3E%3Cpath d='M0 40 Q 50 10 100 40 T 200 40 T 300 40 T 400 40' stroke='%238FC3C7' stroke-width='1' fill='none'/%3E%3Cpath d='M0 95 Q 50 65 100 95 T 200 95 T 300 95 T 400 95' stroke='%238FC3C7' stroke-width='1' fill='none'/%3E%3Cpath d='M0 150 Q 50 120 100 150 T 200 150 T 300 150 T 400 150' stroke='%238FC3C7' stroke-width='1' fill='none'/%3E%3C/svg%3E");
+    --bg-pattern-size:400px 200px;
+  }
+
+  /* ---------- Theme: Chrono (digital stopwatch / race-clock) ---------- */
+  :root[data-theme="chrono"]{
+    --bg:#0A0C0B; --panel:#141715; --panel-2:#1B1F1C; --line:#262B28;
+    --ink:#EDEBE3; --ink-dim:#9AA098; --ink-faint:#6E736E;
+    --gold:#FFB300; --gold-soft:rgba(255,179,0,0.14);
+    --teal:#3FE0A6; --teal-text:#7BEFC2; --teal-soft:rgba(63,224,166,0.14);
+    --rust:#FF3B3B; --rust-text:#FF7A6E; --rust-soft:rgba(255,59,59,0.12);
+    --moss:#E0B23F;
+    --violet:#C77DFF; --violet-soft:rgba(199,125,255,0.16);
+    --font-display:'Space Mono',monospace;
+    --font-body:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;
+    --font-mono:'Space Mono','SFMono-Regular',Consolas,monospace;
+    --bg-pattern:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'%3E%3Cpath d='M40 0H0V40' stroke='%23FF5A36' stroke-width='0.5' fill='none'/%3E%3C/svg%3E");
+    --bg-pattern-size:40px 40px;
+  }
+
+  /* ---------- Theme: Lab (clinical light, sports-science printout) ---------- */
+  :root[data-theme="lab"]{
+    --bg:#F6F7F4; --panel:#FFFFFF; --panel-2:#ECEEE9; --line:#D3D7CE;
+    --ink:#161A17; --ink-dim:#565D57; --ink-faint:#848B82;
+    --gold:#B8863B; --gold-soft:rgba(184,134,59,0.12);
+    --teal:#0E7C86; --teal-text:#0E7C86; --teal-soft:rgba(14,124,134,0.10);
+    --rust:#C15A3E; --rust-text:#C15A3E; --rust-soft:rgba(193,90,62,0.10);
+    --moss:#5C7A52;
+    --violet:#6B4E9E; --violet-soft:rgba(107,78,158,0.12);
+    --font-display:'Zilla Slab',serif;
+    --font-body:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;
+    --font-mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+    --bg-pattern:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M24 0H0V24' stroke='%230E7C86' stroke-width='0.5' fill='none'/%3E%3C/svg%3E");
+    --bg-pattern-size:24px 24px;
+  }
+
+  /* ---------- Theme: Bloom (pink, floral) ---------- */
+  :root[data-theme="bloom"]{
+    --bg:#FCEEF3; --panel:#FFFFFF; --panel-2:#FBE4EC; --line:#F0C9D9;
+    --ink:#3A1F2B; --ink-dim:#7A5566; --ink-faint:#B592A0;
+    --gold:#C2447A; --gold-soft:rgba(194,68,122,0.12);
+    --teal:#6B9071; --teal-text:#4F7A57; --teal-soft:rgba(107,144,113,0.14);
+    --rust:#D9534F; --rust-text:#C24842; --rust-soft:rgba(217,83,79,0.10);
+    --moss:#9575B5;
+    --violet:#4F7CB8; --violet-soft:rgba(79,124,184,0.14);
+    --font-display:'Playfair Display',serif;
+    --font-body:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;
+    --font-mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+    --bg-pattern:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%23C2447A' stroke-width='1'%3E%3Ccircle cx='30' cy='30' r='6'/%3E%3Ccircle cx='22' cy='24' r='6'/%3E%3Ccircle cx='38' cy='24' r='6'/%3E%3Ccircle cx='22' cy='36' r='6'/%3E%3Ccircle cx='38' cy='36' r='6'/%3E%3Cpath d='M30 42 Q28 60 34 78' stroke='%236B9071'/%3E%3C/g%3E%3C/svg%3E");
+    --bg-pattern-size:120px 120px;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--font-body);
+    line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+  }
+  .contour-bg{
+    position:fixed;inset:0;z-index:-1;opacity:0.05;pointer-events:none;
+    background-image:var(--bg-pattern);
+    background-repeat:repeat;background-size:var(--bg-pattern-size);
+    /* Already position:fixed (background-attachment:fixed can't be used
+       instead — iOS Safari ignores it entirely), but fixed elements can
+       still visibly lag/"swim" during a touch-scroll gesture on mobile
+       Safari before snapping back into place once scrolling settles.
+       Forcing this onto its own GPU compositing layer keeps it locked to
+       the viewport through the gesture instead of just at rest. Bloom's
+       dense flower motif makes that lag far more visible than the other
+       themes' faint line patterns, even though the underlying element is
+       positioned identically across all of them. */
+    transform:translateZ(0);
+    -webkit-backface-visibility:hidden;
+  }
+
+  /* Numeric displays (readiness score, stat tiles) always use lining +
+     tabular figures, regardless of which theme's display font is active —
+     a serif/slab face defaulting to old-style figures would otherwise draw
+     e.g. "5" and "1" at visibly different sizes/baselines in the same number. */
+  .hero-figure, .hero-status-figure, .stat-tile .v, .mini-stat .v, .rf-score{
+    font-variant-numeric:lining-nums tabular-nums;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px;}
+  a{color:var(--teal-text);}
+
+  /* ---------- Header / Hero ---------- */
+  .eyebrow{
+    font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;
+    color:var(--ink-faint);text-transform:uppercase;display:flex;align-items:center;gap:10px;
+  }
+  .eyebrow .badge{
+    border:1px solid var(--line);border-radius:2px;padding:2px 6px;color:var(--ink-dim);letter-spacing:.08em;
+  }
+  .hero{padding-top:6px;opacity:0;animation:fadeUp .5s ease-out forwards;}
+  .hero-grid{
+    display:grid;grid-template-columns:auto auto 1fr;gap:36px;align-items:end;
+    margin:14px 0 22px;
+  }
+  .hero-number{border-left:3px solid var(--gold);padding-left:18px;}
+  /* line-height:.9 keeps the two figures tight, but leaves a descender
+     ("p" in "Unproductive") hanging into the label below — the bottom
+     padding gives it room. Same on both figures so the labels stay level. */
+  .hero-figure{
+    font-family:var(--font-display);font-weight:800;
+    font-size:clamp(48px,7vw,76px);line-height:.9;color:var(--ink);
+    padding-bottom:.2em;
+  }
+  .hero-figure sup{font-size:.32em;color:var(--ink-dim);font-family:var(--font-mono);font-weight:500;margin-left:4px;}
+  .hero-label{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);margin-top:4px;}
+  .hero-status{border-left:3px solid var(--teal);padding-left:18px;}
+  .hero-status-figure{
+    font-family:var(--font-display);font-weight:800;
+    font-size:clamp(48px,7vw,76px);line-height:.9;color:var(--ink);
+    padding-bottom:.2em;
+  }
+  .hero-meta{text-align:right;padding-bottom:6px;}
+  .hero-date{font-family:var(--font-display);font-weight:700;font-size:22px;color:var(--ink);}
+  .hero-context{font-size:13.5px;color:var(--ink-dim);margin-top:6px;max-width:420px;margin-left:auto;}
+
+  /* ---------- Ridge chart ---------- */
+  .ridge-wrap{position:relative;border:1px solid var(--line);border-radius:4px;background:var(--panel);padding:18px 18px 10px;}
+  .ridge-scroll{overflow-x:auto;overflow-y:hidden;}
+  /* Fixed height on purpose — width varies freely with zoom/day-count
+     (viewBox="0 0 1000 280" + preserveAspectRatio="none" stretches
+     independently), but height:auto would scale the panel itself up
+     hugely once zoomed-in width exceeds a "normal" container width. */
+  .ridge-scroll svg{height:230px;display:block;overflow:visible;}
+  @media (max-width:860px){
+    .ridge-scroll svg{height:150px;}
+  }
+  .ridge-scroll-hint{
+    display:none;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-faint);
+    text-align:right;margin-top:4px;padding:0 2px;
+  }
+  .ridge-scroll-hint.visible{display:block;}
+  .ridge-legend{display:flex;flex-wrap:wrap;gap:18px;font-family:var(--font-mono);font-size:11.5px;color:var(--ink-dim);margin-top:6px;padding:0 2px;}
+  .ridge-legend span{display:inline-flex;align-items:center;gap:6px;}
+  .swatch{width:14px;height:3px;display:inline-block;border-radius:2px;}
+  .ridge-caption{font-size:12.5px;color:var(--ink-faint);margin-top:10px;padding:0 2px;}
+  .chart-tip{
+    position:absolute;pointer-events:none;background:var(--panel-2);border:1px solid var(--line);
+    border-radius:3px;padding:6px 9px;font-family:var(--font-mono);font-size:11.5px;color:var(--ink);
+    display:none;white-space:nowrap;z-index:5;box-shadow:0 4px 14px rgba(0,0,0,.4);
+  }
+  .chart-tip b{color:var(--gold);}
+  #todayDot{animation:pulse 2.2s ease-in-out infinite;}
+  @keyframes pulse{
+    0%,100%{r:5;opacity:1;} 50%{r:7.5;opacity:.55;}
+  }
+  .draw-line{stroke-dasharray:1000;stroke-dashoffset:1000;animation:drawLine 1.4s ease-out forwards;animation-delay:.2s;}
+  @keyframes drawLine{to{stroke-dashoffset:0;}}
+  @keyframes fadeInLine{to{opacity:1;}}
+
+  /* ---------- Panels ---------- */
+  .panels-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
+  .panel{
+    background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:20px 22px;
+    opacity:0;animation:fadeUp .5s ease-out forwards;
+  }
+  .panels-grid .panel:nth-child(1){animation-delay:.05s;}
+  .panels-grid .panel:nth-child(2){animation-delay:.12s;}
+  .waypoint-grid{margin-top:20px;}
+  .logpanel{margin-top:20px;animation-delay:.28s;}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+
+  .panel h2{
+    font-family:var(--font-display);font-weight:700;font-size:19px;letter-spacing:.02em;
+    margin:0 0 16px;color:var(--ink);text-transform:uppercase;
+  }
+  .panel h2 .tag{
+    font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);text-transform:none;
+    letter-spacing:0;margin-left:8px;font-weight:400;
+  }
+
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px;}
+  .stat-grid.three{grid-template-columns:repeat(3,1fr);}
+  .stat-tile{background:var(--panel-2);border:1px solid var(--line);border-radius:3px;padding:10px 12px;}
+  .stat-tile .v{font-family:var(--font-mono);font-weight:600;font-size:21px;color:var(--ink);}
+  .stat-tile .v.gold{color:var(--gold);}
+  .stat-tile .v.teal{color:var(--teal-text);}
+  .stat-tile .l{font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;}
+  .help-mark{
+    display:inline-block;position:relative;color:var(--ink-faint);border:1px solid var(--line);border-radius:50%;
+    width:13px;height:13px;line-height:11px;text-align:center;font-size:9px;margin-left:4px;
+    cursor:help;font-family:var(--font-mono);
+  }
+  /* JS-positioned (see #helpTooltip in dashboard.js), not CSS ::after —
+     a pure-CSS tooltip anchored to its trigger has no way to clamp itself
+     inside the viewport or a neighboring panel, so one near an edge (e.g.
+     ACWR, the last column in its row) either overflowed into the panel
+     next to it or ran off the edge of the screen on mobile. position:fixed
+     + a measured/clamped left keeps it fully on screen and above every
+     other panel regardless of which stacking context the trigger sits in. */
+  .help-tooltip{
+    position:fixed;width:230px;max-width:calc(100vw - 24px);
+    background:var(--panel-2);border:1px solid var(--line);border-radius:4px;
+    padding:9px 11px;font-size:11.5px;line-height:1.5;color:var(--ink);
+    font-family:var(--font-body);font-weight:400;text-transform:none;letter-spacing:normal;
+    white-space:normal;text-align:left;
+    opacity:0;visibility:hidden;pointer-events:none;
+    transition:opacity .12s ease;
+    z-index:100;box-shadow:0 4px 16px rgba(0,0,0,.45);
+  }
+  .help-tooltip.visible{opacity:1;visibility:visible;}
+  .stat-tile .d{font-size:11.5px;color:var(--ink-faint);margin-top:4px;}
+
+  /* ---------- Expandable metric tiles (VO2 run/bike, endurance) ---------- */
+  .stat-tile.expandable{cursor:pointer;transition:border-color .15s,background .15s;}
+  .stat-tile.expandable:hover{border-color:var(--gold);}
+  .stat-tile.expandable:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  .expand-caret{
+    display:inline-block;margin-left:5px;font-size:9px;color:var(--ink-faint);
+    transition:transform .18s ease;vertical-align:middle;
+  }
+  .stat-tile.expandable.open{border-color:var(--gold);background:var(--gold-soft);}
+  .stat-tile.expandable.open .expand-caret{transform:rotate(180deg);color:var(--gold);}
+
+  .metric-chart{
+    border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:4px;
+    background:var(--panel-2);padding:14px 16px 10px;margin:0 0 16px;
+  }
+  .mc-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px;}
+  .mc-title{font-family:var(--font-mono);font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink);}
+  .mc-meta{font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);}
+  .mc-body{min-height:40px;position:relative;}
+  .mc-hit{cursor:crosshair;}
+  .mc-tip{
+    position:absolute;pointer-events:none;z-index:6;
+    background:var(--panel);border:1px solid var(--line);border-radius:3px;
+    padding:5px 8px;font-family:var(--font-mono);font-size:11.5px;line-height:1.35;
+    color:var(--ink);white-space:nowrap;box-shadow:0 3px 12px rgba(0,0,0,.35);
+  }
+  .mc-tip b{color:var(--gold);font-weight:600;font-size:13px;}
+  .mc-tip .mc-tip-date{display:block;color:var(--ink-faint);font-size:10px;margin-top:1px;}
+  .mc-body svg{display:block;width:100%;height:auto;}
+  .mc-empty{font-size:12.5px;color:var(--ink-faint);padding:10px 0;}
+  /* Tier band labels sit on the colour strip at the right of the plot. */
+  .mc-tier-label{font-family:var(--font-mono);font-size:9px;letter-spacing:.04em;}
+  .mc-axis{font-family:var(--font-mono);font-size:9.5px;fill:var(--ink-faint);}
+  .mc-gridline{stroke:var(--line);stroke-width:1;}
+  .mc-line{fill:none;stroke:var(--gold);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;}
+  .mc-dot{fill:var(--gold);}
+  .mc-dot-last{fill:var(--ink);stroke:var(--panel-2);stroke-width:2;}
+  .mc-now-line{stroke:var(--ink-faint);stroke-width:1;stroke-dasharray:3 3;}
+
+  .note-line{font-size:13px;color:var(--ink-dim);margin:2px 0 18px;line-height:1.55;}
+  .note-line b{color:var(--ink);font-weight:600;}
+
+  /* Load balance bars */
+  .balance-row{margin-bottom:13px;}
+  .balance-top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;}
+  .balance-top .lab{color:var(--ink);font-weight:500;}
+  .balance-top .stat-tag{font-family:var(--font-mono);font-size:10.5px;padding:1px 6px;border-radius:2px;text-transform:uppercase;letter-spacing:.04em;}
+  .stat-tag.above{background:var(--gold-soft);color:var(--gold);}
+  .stat-tag.below{background:var(--rust-soft);color:var(--rust-text);}
+  .stat-tag.within{background:var(--teal-soft);color:var(--teal-text);}
+  .balance-top .val{font-family:var(--font-mono);color:var(--ink-dim);font-size:12px;}
+  .bar-track{position:relative;height:8px;background:var(--panel-2);border:1px solid var(--line);border-radius:2px;}
+  .bar-target{position:absolute;top:-1px;bottom:-1px;background:var(--teal-soft);border-radius:1px;}
+  .bar-actual{position:absolute;top:-3px;bottom:-3px;width:2px;border-radius:1px;}
+  .bar-actual.above{background:var(--gold);}
+  .bar-actual.below{background:var(--rust);}
+  .bar-actual.within{background:var(--teal);}
+
+  /* Race predictions */
+  table.predict{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:13.5px;margin-top:4px;}
+  table.predict th{text-align:left;font-weight:500;color:var(--ink-dim);padding:6px 4px;border-bottom:1px solid var(--line);font-family:var(--font-body);font-size:12.5px;}
+  table.predict td{padding:6px 4px;border-bottom:1px solid var(--line);color:var(--ink);}
+  table.predict tr.highlight td, table.predict tr.highlight th{color:var(--gold);font-weight:600;}
+  .delta-good{color:var(--teal-text);font-weight:500;margin-left:8px;font-size:12px;}
+
+  /* Vitals: readiness flow */
+  .rf-header{font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;}
+  .readiness-flow{display:flex;align-items:center;gap:14px;margin-bottom:18px;}
+  .rf-block{flex:1;background:var(--panel-2);border:1px solid var(--line);border-radius:3px;padding:12px 14px;}
+  .rf-arrow{color:var(--ink-faint);font-size:20px;}
+  .rf-score{font-family:var(--font-mono);font-weight:600;font-size:26px;}
+  .rf-score.high{color:var(--teal-text);}
+  .rf-score.mod{color:var(--gold);}
+  .rf-tag{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-dim);margin-top:2px;}
+  .rf-time{font-size:11.5px;color:var(--ink-faint);margin-top:4px;}
+
+  .factor-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+  .factor-label{width:112px;font-size:12px;color:var(--ink-dim);flex-shrink:0;}
+  .factor-track{flex:1;height:6px;background:var(--panel-2);border:1px solid var(--line);border-radius:2px;position:relative;overflow:hidden;}
+  .factor-fill{position:absolute;top:0;bottom:0;left:0;border-radius:2px;}
+  .factor-fill.good{background:var(--teal);}
+  .factor-fill.mod{background:var(--gold);}
+  .factor-track.nodata{
+    background-image:repeating-linear-gradient(45deg, var(--line), var(--line) 4px, transparent 4px, transparent 8px);
+  }
+  .factor-val{width:88px;text-align:right;font-family:var(--font-mono);font-size:11.5px;color:var(--ink-faint);flex-shrink:0;}
+
+  .gap-callout{
+    margin-top:16px;border:1px dashed var(--rust);background:var(--rust-soft);border-radius:3px;
+    padding:12px 14px;font-size:13px;color:var(--rust-text);line-height:1.55;
+  }
+  .gap-callout b{color:var(--ink);}
+
+  .mini-stats{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px;}
+  .mini-stat .v{font-family:var(--font-mono);font-weight:600;font-size:19px;color:var(--ink);}
+  .mini-stat .l{font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.05em;}
+  .mini-stat .d{font-size:11.5px;color:var(--ink-faint);margin-top:3px;}
+
+  /* Clickable Last Sleep box -> stage breakdown */
+  .sleep-box{
+    background:var(--panel-2);border:1px solid var(--line);border-radius:3px;padding:8px 10px;
+    cursor:pointer;transition:border-color .15s,background .15s;
+  }
+  .sleep-box:hover{border-color:var(--gold);}
+  .sleep-box:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  .sleep-box.open{grid-column:1 / -1;border-color:var(--gold);background:var(--gold-soft);}
+  .sleep-box.open .expand-caret{transform:rotate(180deg);color:var(--gold);}
+  .sleep-stages{margin-top:10px;}
+  .sleep-bar{display:flex;height:10px;border-radius:2px;overflow:hidden;background:var(--line);gap:1px;}
+  .sleep-bar span{display:block;height:100%;}
+  .sleep-stage-rows{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin-top:10px;}
+  .sleep-stage-row{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-dim);}
+  .sleep-stage-row .sw{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+  .sleep-stage-row .t{margin-left:auto;font-family:var(--font-mono);color:var(--ink);}
+  .sleep-stage-row .p{font-family:var(--font-mono);color:var(--ink-faint);width:34px;text-align:right;}
+  .stage-awake{background:var(--rust);}
+  .stage-rem{background:var(--violet);}
+  .stage-light{background:var(--teal);opacity:.55;}
+  .stage-deep{background:var(--teal);}
+
+  /* Waypoints */
+  .last-waypoint{border-left:3px solid var(--teal);animation-delay:.18s;}
+  .last-waypoint h2{color:var(--teal-text);}
+  .next-waypoint{border-left:3px solid var(--gold);animation-delay:.22s;}
+  .next-waypoint h2{color:var(--gold);}
+  .wp-title{font-family:var(--font-display);font-weight:700;font-size:20px;color:var(--ink);margin-bottom:8px;}
+  .wp-source-tag{
+    font-family:var(--font-mono);font-weight:400;font-size:12px;
+    color:var(--ink-faint);text-transform:none;letter-spacing:normal;
+  }
+  .wp-window{font-family:var(--font-mono);font-size:12.5px;margin-bottom:14px;}
+  .last-waypoint .wp-window{color:var(--teal-text);}
+  .next-waypoint .wp-window{color:var(--gold);}
+  .wp-body{font-size:13.5px;color:var(--ink-dim);line-height:1.6;margin-bottom:14px;}
+  .wp-list{list-style:none;margin:0;padding:0;display:grid;gap:9px;}
+  .wp-list li{font-size:13px;color:var(--ink-dim);padding-left:16px;position:relative;}
+  .wp-list li::before{content:'—';position:absolute;left:0;color:var(--gold);}
+  .wp-list b{color:var(--ink);}
+  .wp-alt{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-faint);}
+
+  .review-label{display:block;font-size:12.5px;color:var(--ink-dim);margin:2px 0 6px;}
+  .review-box{
+    width:100%;min-height:120px;background:var(--panel-2);border:1px solid var(--line);border-radius:3px;
+    color:var(--ink);font-family:var(--font-body);font-size:13.5px;padding:10px 12px;resize:vertical;
+    line-height:1.5;
+  }
+  .review-box:focus{outline:none;border-color:var(--teal);}
+  .review-box::placeholder{color:var(--ink-faint);}
+  .review-actions{display:flex;align-items:center;gap:10px;margin-top:10px;}
+  #saveReviewBtn{
+    font-family:var(--font-mono);font-size:12px;background:var(--teal-soft);border:1px solid var(--teal);
+    color:var(--teal-text);padding:6px 14px;border-radius:3px;cursor:pointer;transition:background .15s,color .15s;
+  }
+  #saveReviewBtn:hover{background:var(--teal);color:#12181A;}
+  #reviewStatus{font-size:11.5px;color:var(--ink-faint);}
+
+  /* Race Plan */
+  .race-plan{margin-top:22px;}
+  .rp-week-note{font-size:12.5px;color:var(--gold);margin-top:12px;line-height:1.5;}
+  .rp-week{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:16px;}
+  .rp-day{
+    border:1px solid var(--line);border-radius:4px;padding:12px 13px;background:var(--panel-2);
+    border-left-width:3px;border-left-style:solid;
+  }
+  .rp-day.upcoming{border-left-color:var(--gold);}
+  .rp-day.completed{border-left-color:var(--teal);}
+  .rp-day.missed{border-left-color:var(--rust);opacity:.75;}
+  /* Done, but nothing in the plan asked for it — its own colour so it
+     reads as neither "stuck to the plan" (teal) nor "dropped" (rust).
+     Border only, no background fill: these are a side note next to the
+     plan itself, so they shouldn't pull the eye harder than the planned
+     sessions around them. */
+  .rp-day.unplanned{border-left-color:var(--violet);}
+  /* A day-context entry (travel, rest, no structured training) whose date
+     has passed — nothing was owed, so it reads neutral rather than red. */
+  .rp-day.rest{border-left-color:var(--ink-faint);opacity:.7;}
+  .rp-day-head{
+    display:flex;justify-content:space-between;align-items:baseline;
+    font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--ink-faint);margin-bottom:8px;
+  }
+  .rp-day-head-left{display:flex;align-items:center;gap:5px;}
+  .rp-day-head .cal-icon{width:12px;height:12px;flex:0 0 auto;}
+  .rp-day.upcoming .rp-day-head{color:var(--gold);}
+  .rp-day.completed .rp-day-head{color:var(--teal-text);}
+  .rp-day.missed .rp-day-head{color:var(--rust-text);}
+  .rp-day.unplanned .rp-day-head{color:var(--ink-dim);}
+  .rp-day.rest .rp-day-head{color:var(--ink-faint);}
+  .rp-day.unplanned .rp-day-status{color:var(--violet);opacity:.8;}
+  .rp-day-status{font-size:10px;}
+  .rp-day-body{font-size:13px;color:var(--ink);line-height:1.5;}
+  .rp-day.completed .rp-day-body{color:var(--ink-dim);}
+  .rp-day-planned{font-size:11.5px;color:var(--ink-faint);margin-top:6px;line-height:1.4;}
+
+  /* Activity calendar */
+  .cal-toolbar{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px;}
+  .cal-nav-btn{
+    font-family:var(--font-mono);font-size:16px;line-height:1;background:var(--panel-2);border:1px solid var(--line);
+    color:var(--ink-dim);width:28px;height:28px;border-radius:3px;cursor:pointer;transition:background .15s,color .15s;
+  }
+  .cal-nav-btn:hover{background:var(--gold-soft);color:var(--gold);border-color:var(--gold);}
+  .cal-month-label{font-family:var(--font-display);font-weight:700;font-size:16px;letter-spacing:.02em;min-width:150px;text-align:center;}
+  .cal-weekdays{
+    display:grid;grid-template-columns:repeat(7,1fr);gap:6px;font-family:var(--font-mono);font-size:10.5px;
+    color:var(--ink-faint);text-transform:uppercase;letter-spacing:.05em;text-align:center;margin-bottom:6px;
+  }
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+  .cal-cell{
+    aspect-ratio:1;display:flex;align-items:flex-start;justify-content:flex-end;position:relative;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:3px;padding:8px 10px 0 0;
+    font-family:var(--font-mono);font-size:34px;color:var(--ink-faint);
+  }
+  .cal-cell.empty{background:transparent;border-color:transparent;}
+  /* Today reads as "upcoming" (gold, same as the Race Plan panel's upcoming
+     sessions) — box and number share the exact same color. Past days with a
+     logged activity read as "completed" (teal), same pairing. */
+  .cal-cell.is-today{background:var(--gold-soft);border-color:var(--gold);color:var(--gold);font-weight:600;}
+  .cal-cell.has-activity{background:var(--teal-soft);border-color:var(--teal);color:var(--teal);font-weight:600;}
+  .cal-cell.clickable{cursor:pointer;}
+  .cal-cell.is-today.clickable:hover{background:var(--gold);color:#12181A;}
+  .cal-cell.has-activity.clickable:hover{background:var(--teal);color:#12181A;}
+  .cal-cell.is-selected{outline:2px solid var(--ink);outline-offset:1px;}
+  .cal-day-num{position:relative;z-index:1;}
+  .cal-cell-icons{position:absolute;left:9px;bottom:9px;display:flex;align-items:center;gap:7px;color:var(--ink-faint);}
+  .cal-cell.is-today .cal-cell-icons,
+  .cal-cell.has-activity .cal-cell-icons{color:currentColor;opacity:.8;}
+  .cal-icon{width:22px;height:22px;flex:0 0 auto;overflow:visible;}
+  .cal-day-detail{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);}
+  .cal-day-detail-label{
+    font-family:var(--font-mono);font-size:12px;color:var(--ink-dim);text-transform:uppercase;
+    letter-spacing:.05em;margin-bottom:10px;
+  }
+
+  /* Calendar day-detail table (also used to be the standalone Route Log) */
+  .log-scroll{overflow-x:auto;}
+  table.log{width:100%;min-width:680px;border-collapse:collapse;font-family:var(--font-mono);font-size:13px;}
+  table.log th{
+    text-align:left;font-family:var(--font-body);font-weight:500;font-size:11.5px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.05em;padding:8px 10px;border-bottom:1px solid var(--line);
+  }
+  table.log td{padding:8px 10px;border-bottom:1px solid var(--line);color:var(--ink);vertical-align:top;}
+  table.log tr:hover td{background:rgba(255,255,255,0.02);}
+  table.log .day{color:var(--ink-faint);font-size:11px;}
+  table.log .mini{color:var(--ink-faint);font-size:11px;}
+  tr.kalmar-row{background:var(--gold-soft);cursor:pointer;}
+  tr.kalmar-row td{font-weight:600;}
+  tr.kalmar-row .hint{font-family:var(--font-body);font-weight:400;color:var(--gold);font-size:12px;margin-left:8px;}
+  tr.legs-group td{background:rgba(255,255,255,0.015);color:var(--ink-dim);}
+  tr.legs-group .leg{padding-left:26px;position:relative;}
+  tr.legs-group .leg::before{content:'↳';position:absolute;left:8px;color:var(--ink-faint);}
+  tr.legs-group.hidden{display:none;}
+
+  /* Session-type badge + per-activity training-load breakdown */
+  .type-badge{
+    font-family:var(--font-mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;
+    padding:1px 6px;border-radius:2px;margin-left:7px;
+  }
+  .type-badge.easy{background:var(--teal-soft);color:var(--teal-text);}
+  .type-badge.tempo{background:var(--gold-soft);color:var(--gold);}
+  .type-badge.interval{background:var(--rust-soft);color:var(--rust-text);}
+  .type-badge.long{background:rgba(140,169,126,0.14);color:var(--moss);}
+  /* Solid, so it reads as the same thing as the chart's race flag rather
+     than as another shade of the soft rust interval badge. */
+  .type-badge.race{background:var(--rust);color:var(--panel);}
+  .loads-toggle{
+    font-family:var(--font-body);font-weight:400;font-size:12px;color:var(--teal-text);margin-left:7px;
+    cursor:pointer;white-space:nowrap;
+  }
+  .loads-toggle:hover{text-decoration:underline;}
+  tr.load-row.hidden{display:none;}
+  .load-cell{background:rgba(255,255,255,0.015);font-size:12.5px;color:var(--ink-dim);padding:10px !important;}
+  .load-stat{margin-right:18px;}
+  .load-stat b{color:var(--ink);font-weight:600;margin-right:4px;}
+  .load-source{color:var(--ink-faint);font-size:11px;}
+
+  footer{margin-top:26px;font-size:12px;color:var(--ink-faint);text-align:center;}
+  .refresh-box{
+    margin-top:16px;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;
+  }
+  .refresh-label{font-size:12px;color:var(--ink-dim);}
+  #refreshPhrase{
+    font-family:var(--font-mono);font-size:12px;background:var(--panel-2);border:1px solid var(--line);
+    color:var(--ink-dim);padding:6px 10px;border-radius:3px;width:300px;max-width:56vw;text-align:center;
+  }
+  #refreshBtn{
+    font-family:var(--font-mono);font-size:12px;background:var(--gold-soft);border:1px solid var(--gold);
+    color:var(--gold);padding:6px 14px;border-radius:3px;cursor:pointer;transition:background .15s,color .15s;
+  }
+  #refreshBtn:hover{background:var(--gold);color:#12181A;}
+  #refreshHint{font-size:11px;color:var(--teal-text);min-width:190px;text-align:left;}
+  @media (max-width:860px){
+    #refreshPhrase{width:100%;max-width:100%;order:3;}
+    .refresh-box{flex-direction:column;}
+  }
+
+  @media (max-width:860px){
+    .hero-grid{grid-template-columns:1fr;gap:14px;}
+    .hero-meta{text-align:left;}
+    .hero-context{margin-left:0;}
+    .panels-grid{grid-template-columns:1fr;}
+    .stat-grid{grid-template-columns:repeat(2,1fr);}
+    .mini-stats{grid-template-columns:1fr;}
+    .readiness-flow{flex-direction:column;align-items:stretch;}
+    .rf-arrow{text-align:center;transform:rotate(90deg);}
+    .cal-cell{font-size:9px;padding:4px 5px 0 0;}
+    .cal-cell-icons{left:4px;bottom:4px;gap:3px;}
+    .cal-icon{width:13px;height:13px;}
+  }
+
+  /* ---------- Live-data additions ---------- */
+  .v.nodata, .mini-stat .v.nodata{color:var(--ink-faint);font-family:var(--font-body);font-weight:500;font-size:14px;}
+  .error-banner{
+    border:1px solid var(--rust);background:var(--rust-soft);border-radius:4px;
+    padding:14px 18px;font-size:13.5px;color:var(--rust-text);line-height:1.6;margin-bottom:20px;
+  }
+  .error-banner b{color:var(--ink);}
+  #refreshBtn:disabled{opacity:.5;cursor:default;}
+  #refreshBtn.spinning{animation:spin-pulse 1s ease-in-out infinite;}
+  @keyframes spin-pulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+  .empty-note{font-size:12.5px;color:var(--ink-faint);padding:8px 0;}
+
+  /* Theme switcher */
+  #themeSwitcher{
+    position:fixed;top:16px;right:16px;z-index:40;
+    font-family:var(--font-mono);font-size:11.5px;background:var(--panel-2);
+    border:1px solid var(--line);color:var(--ink-dim);padding:6px 10px;border-radius:3px;
+    cursor:pointer;appearance:none;-webkit-appearance:none;
+  }
+  #themeSwitcher:hover,#themeSwitcher:focus{border-color:var(--gold);color:var(--ink);outline:none;}
+  @media (max-width:860px){
+    #themeSwitcher{top:10px;right:10px;font-size:10.5px;padding:5px 8px;}
+    /* The switcher floats fixed over the top-right corner, which on a
+       narrow viewport is right where the eyebrow row (title + "Live ·
+       Garmin Connect" badge) sits — push page content down below it, and
+       let the eyebrow wrap as a fallback in case that row ever gets wider
+       than the switcher's left edge allows. */
+    .wrap{padding-top:56px;}
+    .eyebrow{flex-wrap:wrap;row-gap:4px;}
+  }
+
+  /* Calendar day-detail: rotate 90° on mobile — sessions run left to right
+     (earliest first, same order the rows are already in) as cards, each
+     card's stats stacked underneath instead of running across a table row. */
+  @media (max-width:860px){
+    #calDayDetail table.log{min-width:0;}
+    #calDayDetail table.log thead{display:none;}
+    #calDayDetail table.log tbody{display:flex;flex-direction:row;align-items:flex-start;gap:10px;}
+    #calDayDetail table.log tr{display:flex;flex-direction:column;flex:0 0 auto;width:150px;border:1px solid var(--line);border-radius:4px;padding:10px;}
+    #calDayDetail table.log tr.legs-group{width:130px;}
+    #calDayDetail table.log tr.legs-group.hidden{display:none;}
+    #calDayDetail table.log tr.load-row{width:auto;}
+    #calDayDetail table.log td{display:block;border-bottom:none;padding:3px 0;white-space:normal;}
+    #calDayDetail table.log td[data-label]{margin-top:4px;}
+    #calDayDetail table.log td[data-label]::before{
+      content:attr(data-label);display:block;font-size:10px;color:var(--ink-faint);
+      text-transform:uppercase;letter-spacing:.04em;margin-bottom:1px;
+    }
+  }

@@ -1,0 +1,13 @@
+Flask==3.0.3
+garminconnect==0.3.11
+python-dotenv==1.0.1
+mcp==2.1.0
+uvicorn==0.52.4
+# Used directly by mcp_server.py (internal cache-invalidation call to the
+# Flask app) and by the vendored garmin_tools modules. Arrives transitively
+# via garminconnect too, but pinned here because we import it ourselves.
+requests==2.34.2
+# Needed by garmin_tools/activity_analysis.py for the FIT-file tools
+# (get_activity_fit_messages / get_power_duration_curve). Without it those
+# tools silently fail to register.
+fitparse==1.2.0
