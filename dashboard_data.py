@@ -1231,7 +1231,7 @@ def build_next_waypoint(training_load: dict, readiness_entries: list[dict], acti
 
 
 RUN_TYPE_HINT = "run"
-CYCLING_TYPE_HINTS = ("cycl", "bik")  # covers road_biking, mountain_biking, e_bike_mountain, cycling, ...
+CYCLING_TYPE_HINTS = ("cycl", "bik", "ride")  # covers road_biking, mountain_biking, e_bike_mountain, cycling, virtual_ride (Zwift), ...
 SWIM_TYPE_HINT = "swim"
 STRENGTH_TYPE_HINT = "strength"
 HIKE_TYPE_HINTS = ("hik", "mountaineering")  # "hik" is safe against "biking" -- no h in it

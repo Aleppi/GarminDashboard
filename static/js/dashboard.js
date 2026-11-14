@@ -1043,7 +1043,7 @@
   function iconKeyForType(typeKey) {
     const t = (typeKey || '').toLowerCase();
     if (t.includes('run')) return 'running';
-    if (t.includes('cycl') || t.includes('bik')) return 'cycling';
+    if (t.includes('cycl') || t.includes('bik') || t.includes('ride')) return 'cycling';
     if (t.includes('strength')) return 'strength';
     if (t.includes('swim')) return 'swimming';
     if (t.includes('walk')) return 'walking';

@@ -19,6 +19,7 @@ import race_days
 import reviews
 import users
 from dashboard_data import (
+    CYCLING_TYPE_HINTS,
     MAX_ACTIVITY_RANGE_DAYS,
     MAX_TREND_RANGE_DAYS,
     build_activity_calendar,
@@ -381,7 +382,7 @@ def api_activity_training_load(activity_id: str):
     except GarminUnavailable as exc:
         return jsonify({"error": str(exc), "error_type": "unavailable"}), 200
 
-    prefer_power = "cycl" in type_key or "bik" in type_key
+    prefer_power = any(hint in type_key for hint in CYCLING_TYPE_HINTS)
     result = build_activity_training_load(client, activity_id, prefer_power, total_load)
     return jsonify(result)
 

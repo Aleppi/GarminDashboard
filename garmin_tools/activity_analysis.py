@@ -1691,6 +1691,7 @@ def register_tools(app):
                 or activity_type.lower() in str(a.get("activityType", {}).get("parentTypeId", "")).lower()
                 or "cycling" in str(a.get("activityType", {}).get("typeKey", "")).lower()
                 or "biking" in str(a.get("activityType", {}).get("typeKey", "")).lower()
+                or "virtual_ride" in str(a.get("activityType", {}).get("typeKey", "")).lower()
             ]
 
             if not cycling_activities:
