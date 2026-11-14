@@ -16,6 +16,7 @@ import html
 import logging
 import os
 from datetime import date
+from typing import Optional
 from urllib.parse import urlparse
 
 import requests
@@ -210,23 +211,84 @@ def push_training_plan(race_name: str, goal_time: str, race_date: str, sessions:
 
 
 @mcp.tool()
-def mark_race_day(race_date: str, name: str = "") -> dict:
-    """Flag a date as a race on the fitness (CTL/ATL) chart — nothing does
-    this automatically (Garmin has no reliable "this was a race" signal for
-    an untagged activity), so a day only shows up flagged if the athlete
-    actually said it was a race. Use this whenever someone mentions an
-    upcoming or past race, even casually ("I have a race on Oct 11th") —
-    it doesn't require a training plan; for a full plan toward a goal race,
-    use push_training_plan instead, which flags its own race_date automatically.
+def mark_race_day(
+    race_date: str,
+    name: str = "",
+    kind: str = "",
+    status: str = "",
+    date_approx: Optional[bool] = None,
+    sport: str = "",
+    location: str = "",
+    distance: str = "",
+    elevation: str = "",
+    goal: str = "",
+    start_time: str = "",
+    notes: str = "",
+    url: str = "",
+) -> dict:
+    """Add or update a race (or dated goal) for this athlete. It gets a flag
+    on the fitness (CTL/ATL) chart and, while it's still ahead, a card with a
+    countdown on the dashboard's Races tab (the tab only appears for people
+    with something upcoming). Nothing does this automatically (Garmin has no
+    reliable "this was a race" signal for an untagged activity), so use it
+    whenever someone mentions an upcoming or past race, even casually ("I
+    have a race on Oct 11th") — it doesn't require a training plan; for a
+    full plan toward a goal race, use push_training_plan, which marks its
+    own race_date automatically.
+
+    Calling it again for the same date updates that entry: only the fields
+    you pass change, so you can fill in details later without repeating
+    the rest. Pass a single space " " to clear a text field. To move a race
+    to another date, unmark_race_day the old date first.
+
+    Keep `name` to the event's own name (e.g. "Monaco Run – Trail du Mont
+    Agel") — put training context in `notes`, since the name is what shows
+    as the card title and the chart flag.
 
     Args:
-        race_date: "YYYY-MM-DD".
-        name: Optional label, e.g. "Basel Half Marathon".
+        race_date: "YYYY-MM-DD". If the organiser hasn't fixed the exact day
+            yet, use your best estimate and set date_approx=True.
+        name: Event name.
+        kind: "race" (default) or "goal" — a dated target that isn't an
+            event, e.g. "Base block done". Goals show on the Races tab but
+            get no race flag on the chart.
+        status: "confirmed" (default) or "tentative" — not entered/decided yet.
+        date_approx: True when race_date is an estimate.
+        sport: e.g. "trail running", "triathlon", "cycling".
+        location: e.g. "Monaco".
+        distance: As text, e.g. "30 km", "~106 km", "70.3".
+        elevation: Climb as text, e.g. "1,500 m D+".
+        goal: The athlete's own goal, e.g. "Sub 4:00", "Finish & enjoy".
+        start_time: Local start time, e.g. "08:30" — the countdown targets it.
+        notes: Anything else worth seeing on the card (cut-offs, kit, why
+            this race matters in the season).
+        url: Official race page.
     """
     username = _current_username()
-    race_days.mark_race_day(username, race_date, name)
+    details = {k: v for k, v in {
+        "sport": sport, "location": location, "distance": distance, "elevation": elevation,
+        "goal": goal, "start_time": start_time, "notes": notes, "url": url,
+    }.items() if v}
+    details = {k: ("" if v.strip() == "" else v.strip()) for k, v in details.items()}
+    try:
+        race_days.mark_race_day(
+            username, race_date, name.strip(),
+            kind=kind or None, status=status or None, date_approx=date_approx, **details,
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
     _invalidate_dashboard_cache(username)
     return {"saved": True}
+
+
+@mcp.tool()
+def get_races() -> dict:
+    """This athlete's races and dated goals as shown on the dashboard's Races
+    tab: everything upcoming (with days_to_go, status, details, and whether
+    the stored training plan targets it) plus the most recent past races.
+    Check this before planning so advice accounts for every race on the
+    calendar, not just the one a training plan was pushed for."""
+    return race_days.races_overview(_current_username(), date.today().isoformat())
 
 
 @mcp.tool()
@@ -269,7 +331,7 @@ def list_activities(start_date: str, end_date: str) -> dict:
         client = garmin_client.get_client(username)
     except (GarminAuthRequired, GarminUnavailable) as exc:
         return {"error": str(exc)}
-    race_dates = {r["date"] for r in race_days.get_race_days(username)}
+    race_dates = race_days.race_dates(username)
     return {"days": build_activity_calendar(client, start_date, end_date, race_dates)}
 
 

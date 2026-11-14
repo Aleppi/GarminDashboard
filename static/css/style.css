@@ -586,3 +586,171 @@
       text-transform:uppercase;letter-spacing:.04em;margin-bottom:1px;
     }
   }
+
+  /* ---------- View tabs (Dashboard / Races) ---------- */
+  .view[hidden], .view-tabs[hidden], #viewRaces [hidden]{display:none !important;}
+  .view-tabs{
+    display:flex;gap:4px;border-bottom:1px solid var(--line);margin:0 0 22px;
+    opacity:0;animation:fadeUp .4s ease-out forwards;
+  }
+  .view-tab{
+    font-family:var(--font-mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+    background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;
+    color:var(--ink-dim);padding:10px 14px 9px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;
+    transition:color .15s,border-color .15s;
+  }
+  .view-tab:hover{color:var(--ink);}
+  .view-tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--gold);}
+  .view-tab:focus-visible{outline:1px solid var(--gold);outline-offset:-1px;}
+  .view-tab-count{
+    font-size:10.5px;letter-spacing:0;min-width:18px;padding:1px 5px;border-radius:9px;
+    background:var(--gold-soft);color:var(--gold);text-align:center;
+  }
+
+  /* ---------- Races view ---------- */
+  .race-feature{
+    display:grid;grid-template-columns:1fr auto;gap:28px;
+    background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--gold);
+    border-radius:4px;padding:26px 28px;opacity:0;animation:fadeUp .5s ease-out forwards;
+  }
+  .race-feature.tentative{border-style:dashed;border-left-style:solid;border-left-color:var(--ink-faint);}
+  .race-eyebrow{
+    display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+    font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);
+  }
+  .race-eyebrow > span:first-of-type{margin-right:4px;}
+  .race-eyebrow .cal-icon{width:15px;height:15px;color:var(--gold);flex:0 0 auto;}
+  .race-feature-name{
+    font-family:var(--font-display);font-weight:800;font-size:clamp(28px,4.4vw,46px);
+    line-height:1.02;margin:12px 0 8px;color:var(--ink);letter-spacing:.005em;
+  }
+  .race-when{font-size:14px;color:var(--ink-dim);margin-bottom:16px;}
+  .race-chip{
+    font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+    padding:2px 7px;border:1px solid var(--line);border-radius:2px;color:var(--ink-dim);background:none;line-height:1.5;
+  }
+  .race-chip.confirmed{border-color:var(--teal);color:var(--teal-text);background:var(--teal-soft);}
+  .race-chip.tentative{border-color:var(--rust);border-style:dashed;color:var(--rust-text);}
+  .race-chip.goal{border-color:var(--violet);color:var(--violet);background:var(--violet-soft);}
+  .race-chip.plan{border-color:var(--gold);color:var(--gold);background:var(--gold-soft);cursor:pointer;}
+  .race-chip.plan:hover{background:var(--gold);color:var(--bg);}
+  .race-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px;margin:0 0 14px;}
+  .race-facts > div{background:var(--panel-2);border:1px solid var(--line);border-radius:3px;padding:9px 12px;}
+  .race-facts dt{font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);}
+  .race-facts dd{
+    margin:2px 0 0;font-family:var(--font-display);font-weight:700;font-size:19px;color:var(--ink);
+    font-variant-numeric:lining-nums tabular-nums;
+  }
+  .race-notes{font-size:13.5px;color:var(--ink-dim);line-height:1.55;margin:0 0 10px;max-width:72ch;}
+  .race-link{font-family:var(--font-mono);font-size:12px;text-decoration:none;}
+  .race-link:hover{text-decoration:underline;}
+
+  .race-countdown{
+    text-align:right;border-left:1px solid var(--line);padding-left:28px;min-width:210px;
+    display:flex;flex-direction:column;justify-content:center;
+  }
+  .race-countdown-figure{
+    font-family:var(--font-display);font-weight:800;font-size:clamp(64px,10vw,112px);line-height:.85;
+    color:var(--gold);font-variant-numeric:lining-nums tabular-nums;
+  }
+  .race-countdown-label{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);margin-top:8px;}
+  .race-countdown-weeks{font-size:13px;color:var(--ink-dim);margin-top:4px;}
+  .race-clock{
+    font-family:var(--font-mono);font-size:12.5px;color:var(--teal-text);margin-top:12px;
+    font-variant-numeric:tabular-nums;min-height:1em;
+  }
+
+  .race-season{margin-top:20px;animation-delay:.08s;}
+  .race-timeline{padding:0 8px;}
+  .race-track{position:relative;height:2px;background:var(--line);margin:76px 0 88px;}
+  .race-tick, .race-today{
+    position:absolute;top:8px;transform:translateX(-50%);
+    font-family:var(--font-mono);font-size:10px;color:var(--ink-faint);white-space:nowrap;
+  }
+  .race-tick i, .race-today i{position:absolute;left:50%;top:-11px;width:1px;height:7px;background:var(--line);}
+  .race-tick.year{color:var(--ink-dim);}
+  .race-today{transform:none;color:var(--ink-dim);}
+  .race-today i{left:0;top:-13px;width:9px;height:9px;border-radius:50%;background:var(--ink);margin-left:-4px;}
+  .race-marker{position:absolute;top:1px;width:0;height:0;}
+  .race-marker-dot{
+    position:absolute;left:0;top:0;width:13px;height:13px;border-radius:50%;
+    background:var(--gold);border:2px solid var(--panel);transform:translate(-50%,-50%);z-index:2;
+  }
+  .race-marker.tentative .race-marker-dot{background:var(--panel);border:2px solid var(--gold);}
+  .race-marker.goal .race-marker-dot{background:var(--violet);}
+  .race-marker::before{content:"";position:absolute;left:0;width:1px;background:var(--line);}
+  .race-marker.above::before{bottom:0;height:16px;}
+  .race-marker.below::before{top:0;height:30px;}
+  .race-marker.above.depth-2::before{height:70px;}
+  .race-marker.below.depth-2::before{height:84px;}
+  .race-marker-label{
+    position:absolute;width:max-content;max-width:170px;font-size:11.5px;line-height:1.35;
+    font-family:var(--font-mono);color:var(--ink-dim);
+  }
+  .race-marker-label b{display:block;font-family:var(--font-body);font-size:12.5px;font-weight:600;color:var(--ink);}
+  .race-marker.above .race-marker-label{bottom:18px;}
+  .race-marker.below .race-marker-label{top:32px;}
+  .race-marker.above.depth-2 .race-marker-label{bottom:72px;}
+  .race-marker.below.depth-2 .race-marker-label{top:86px;}
+  .race-marker.align-center .race-marker-label{left:0;transform:translateX(-50%);text-align:center;}
+  .race-marker.align-left .race-marker-label{left:-6px;}
+  .race-marker.align-right .race-marker-label{right:-6px;text-align:right;}
+
+  .race-list-panel{margin-top:20px;animation-delay:.14s;}
+  .race-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px;}
+  .race-card{
+    background:var(--panel-2);border:1px solid var(--line);border-top:3px solid var(--gold);
+    border-radius:4px;padding:15px 18px 16px;
+  }
+  .race-card.tentative{border-style:dashed;border-top-style:solid;border-top-color:var(--ink-faint);}
+  .race-card.goal{border-top-color:var(--violet);}
+  .race-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+  .race-card-days{
+    font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-dim);
+    display:flex;align-items:baseline;gap:6px;
+  }
+  .race-card-days span{
+    font-family:var(--font-display);font-weight:800;font-size:34px;line-height:1;color:var(--gold);
+    letter-spacing:0;font-variant-numeric:lining-nums tabular-nums;
+  }
+  .race-card.tentative .race-card-days span{color:var(--ink-dim);}
+  .race-card.goal .race-card-days span{color:var(--violet);}
+  .race-card-chips{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end;}
+  .race-card-name{
+    display:flex;align-items:center;gap:8px;margin:12px 0 4px;
+    font-family:var(--font-display);font-weight:700;font-size:20px;line-height:1.15;color:var(--ink);
+  }
+  .race-card-name .cal-icon{width:16px;height:16px;color:var(--gold);flex:0 0 auto;}
+  .race-card .race-when{font-size:13px;margin-bottom:12px;}
+  .race-card .race-facts{grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;}
+  .race-card .race-facts > div{background:var(--panel);padding:7px 10px;}
+  .race-card .race-facts dd{font-size:16px;}
+  .race-card .race-notes{font-size:12.5px;}
+
+  .race-past-panel{margin-top:20px;animation-delay:.2s;}
+  .race-past{list-style:none;margin:0;padding:0;}
+  .race-past li{
+    display:grid;grid-template-columns:150px 1fr auto;gap:12px;align-items:baseline;
+    padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px;
+  }
+  .race-past li:last-child{border-bottom:none;}
+  .race-past-date{font-family:var(--font-mono);font-size:12px;color:var(--ink-dim);}
+  .race-past-name{color:var(--ink);}
+  .race-past-ago{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-faint);}
+  .race-howto{font-size:12px;color:var(--ink-faint);margin:18px 2px 0;line-height:1.5;}
+
+  @media (max-width:860px){
+    .view-tabs{margin-bottom:16px;}
+    .race-feature{grid-template-columns:1fr;gap:18px;padding:20px 18px;}
+    .race-countdown{
+      text-align:left;border-left:none;border-top:1px solid var(--line);
+      padding:16px 0 0;min-width:0;display:grid;grid-template-columns:auto 1fr;column-gap:14px;align-items:end;
+    }
+    .race-countdown-figure{grid-row:1 / span 3;font-size:76px;}
+    .race-countdown-label{margin-top:0;}
+    .race-tick.odd{display:none;}
+    .race-marker-label{max-width:118px;font-size:10.5px;}
+    .race-marker-label b{font-size:11.5px;}
+    .race-past li{grid-template-columns:1fr auto;row-gap:2px;}
+    .race-past-date{grid-column:1 / -1;}
+  }

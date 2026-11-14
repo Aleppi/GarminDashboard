@@ -327,7 +327,7 @@ def api_activities():
     except GarminUnavailable as exc:
         return jsonify({"error": str(exc), "error_type": "unavailable"}), 200
 
-    race_dates = {r["date"] for r in race_days.get_race_days(username)}
+    race_dates = race_days.race_dates(username)
     days = build_activity_calendar(client, start_str, end_str, race_dates)
     with _cache_lock:
         _range_caches[cache_key] = {"days": days, "fetched_at": time.time()}
@@ -419,11 +419,19 @@ def api_trend():
     except GarminUnavailable as exc:
         return jsonify({"error": str(exc), "error_type": "unavailable"}), 200
 
-    race_dates = {r["date"] for r in race_days.get_race_days(username)}
+    race_dates = race_days.race_dates(username)
     result = build_trend_range(client, start_str, end_str, race_dates, username=username)
     with _cache_lock:
         _range_caches[cache_key] = {"result": result, "fetched_at": time.time()}
     return jsonify(result)
+
+
+@app.route("/api/races")
+@auth.login_required
+def api_races():
+    # Plain DB read (no Garmin call), so no caching — the Races tab reflects
+    # a race marked from chat the moment the page polls again.
+    return jsonify(race_days.races_overview(auth.current_username(), date.today().isoformat()))
 
 
 @app.route("/api/review/<activity_id>", methods=["GET"])

@@ -1266,12 +1266,337 @@
     }
   }
 
+  // ---------------------------------------------------------- view tabs --
+  // Two views: the dashboard itself and Races. The tab bar stays hidden
+  // until /api/races reports something upcoming, so for anyone without a
+  // race planned the page is exactly the single dashboard it always was.
+  const VIEWS = ['dashboard', 'races'];
+  let currentView = 'dashboard';
+  let racesAvailable = false;
+  // The fitness chart measures its container on render, and a hidden view
+  // measures 0 wide — so while Races is showing, dashboard polls park the
+  // chart data here and it's drawn the moment the dashboard is shown again.
+  let pendingRidge = null;
+
+  function viewFromHash() {
+    return location.hash === '#races' ? 'races' : 'dashboard';
+  }
+
+  function setView(view, opts) {
+    opts = opts || {};
+    if (!VIEWS.includes(view) || (view === 'races' && !racesAvailable)) view = 'dashboard';
+    currentView = view;
+    VIEWS.forEach((v) => {
+      const panel = $(v === 'races' ? 'viewRaces' : 'viewDashboard');
+      const tab = $(v === 'races' ? 'tabRaces' : 'tabDashboard');
+      panel.hidden = v !== view;
+      tab.setAttribute('aria-selected', v === view ? 'true' : 'false');
+      tab.tabIndex = v === view ? 0 : -1;
+    });
+    if (opts.updateHash !== false) {
+      const hash = view === 'races' ? '#races' : '';
+      if (location.hash !== hash) history.replaceState(null, '', location.pathname + location.search + hash);
+    }
+    if (view === 'dashboard' && pendingRidge) {
+      const r = pendingRidge;
+      pendingRidge = null;
+      renderRidgeChart(r);
+    }
+    if (view === 'races') startRaceClock(); else stopRaceClock();
+  }
+
+  function bindViewTabs() {
+    const tabs = [$('tabDashboard'), $('tabRaces')];
+    tabs.forEach((tab, i) => {
+      tab.addEventListener('click', () => setView(tab.dataset.view));
+      tab.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        e.preventDefault();
+        const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+        next.focus();
+        setView(next.dataset.view);
+      });
+    });
+    window.addEventListener('hashchange', () => setView(viewFromHash(), { updateHash: false }));
+  }
+
+  // -------------------------------------------------------------- races --
+  let lastRaces = null;
+  let featuredRace = null;
+  let raceClockTimer = null;
+
+  function parseLocalDate(iso) { return new Date(iso + 'T00:00:00'); }
+
+  function daysUntil(iso) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return Math.round((parseLocalDate(iso) - today) / 86400000);
+  }
+
+  function fmtRaceDate(r) {
+    const d = parseLocalDate(r.date);
+    if (r.date_approx) return '~' + d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function fmtWeeksDays(days) {
+    if (days < 7) return days === 1 ? '1 day' : days + ' days';
+    const w = Math.floor(days / 7), d = days % 7;
+    return w + (w === 1 ? ' week' : ' weeks') + (d ? ', ' + d + (d === 1 ? ' day' : ' days') : '');
+  }
+
+  function raceIconKey(r) {
+    const s = (r.sport || '').toLowerCase();
+    if (s.includes('tri') || s.includes('multi')) return 'multisport';
+    if (s.includes('run')) return 'running';
+    if (s.includes('cycl') || s.includes('bik') || s.includes('ride')) return 'cycling';
+    if (s.includes('swim')) return 'swimming';
+    if (s.includes('ski')) return 'skiing';
+    if (s.includes('hik')) return 'hiking';
+    return 'other';
+  }
+
+  function safeUrl(u) {
+    try {
+      const url = new URL(u);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+    } catch (e) { return null; }
+  }
+
+  function raceChips(r) {
+    const chips = [];
+    if (r.kind === 'goal') chips.push('<span class="race-chip goal">Goal</span>');
+    if (r.status === 'tentative') chips.push('<span class="race-chip tentative">Not confirmed</span>');
+    else if (r.kind !== 'goal') chips.push('<span class="race-chip confirmed">Confirmed</span>');
+    if (r.date_approx) chips.push('<span class="race-chip tbc">Date TBC</span>');
+    if (r.has_plan) chips.push('<button type="button" class="race-chip plan" data-goto-plan>Training plan ›</button>');
+    return chips.join('');
+  }
+
+  function raceFacts(r) {
+    const goal = r.goal || r.plan_goal;
+    const facts = [
+      ['Distance', r.distance],
+      ['Climb', r.elevation],
+      ['Goal', goal],
+      ['Start', r.start_time],
+    ].filter((f) => f[1]);
+    if (!facts.length) return '';
+    return '<dl class="race-facts">' + facts.map((f) =>
+      '<div><dt>' + f[0] + '</dt><dd>' + escapeHtml(f[1]) + '</dd></div>').join('') + '</dl>';
+  }
+
+  function raceWhere(r) {
+    return [fmtRaceDate(r), r.location]
+      .filter(Boolean).map(escapeHtml).join(' · ');
+  }
+
+  function raceExtras(r) {
+    let html = '';
+    if (r.notes) html += '<p class="race-notes">' + escapeHtml(r.notes) + '</p>';
+    const url = r.url && safeUrl(r.url);
+    if (url) html += '<a class="race-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">Race website ↗</a>';
+    return html;
+  }
+
+  function renderRaceFeature(r) {
+    const el = $('raceFeature');
+    const days = daysUntil(r.date);
+    const icon = ACTIVITY_ICONS[raceIconKey(r)] || ACTIVITY_ICONS.other;
+    const label = r.kind === 'goal' ? 'Next goal' : 'Next race';
+    el.className = 'race-feature' + (r.status === 'tentative' ? ' tentative' : '');
+    el.innerHTML =
+      '<div class="race-feature-main">' +
+        '<div class="race-eyebrow">' + icon + '<span>' + label + '</span>' + raceChips(r) + '</div>' +
+        '<h2 class="race-feature-name">' + escapeHtml(r.name || 'Unnamed race') + '</h2>' +
+        '<div class="race-when">' + raceWhere(r) + '</div>' +
+        raceFacts(r) +
+        raceExtras(r) +
+      '</div>' +
+      '<div class="race-countdown" aria-live="off">' +
+        '<div class="race-countdown-figure">' + (days === 0 ? 'Today' : (r.date_approx ? '~' : '') + days) + '</div>' +
+        '<div class="race-countdown-label">' + (days === 0 ? (r.kind === 'goal' ? 'goal day' : 'race day') : (days === 1 ? 'day to go' : 'days to go')) + '</div>' +
+        (days >= 7 ? '<div class="race-countdown-weeks">' + fmtWeeksDays(days) + '</div>' : '') +
+        '<div class="race-clock" id="raceClock"></div>' +
+      '</div>';
+  }
+
+  function renderRaceTimeline(upcoming) {
+    const panel = $('raceSeasonPanel');
+    if (upcoming.length < 2) { panel.hidden = true; return; }
+    panel.hidden = false;
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const lastDate = parseLocalDate(upcoming[upcoming.length - 1].date);
+    // Pad the far end a little so the last marker isn't jammed on the edge.
+    const spanDays = Math.max(30, Math.round((lastDate - start) / 86400000) * 1.04);
+    const end = new Date(start.getTime() + spanDays * 86400000);
+    const pct = (d) => Math.max(0, Math.min(100, ((d - start) / (end - start)) * 100));
+
+    let ticks = '';
+    const m = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+    let i = 0;
+    while (m < end) {
+      if (pct(m) < 7) { m.setMonth(m.getMonth() + 1); i++; continue; } // would collide with "Today"
+      const isJan = m.getMonth() === 0;
+      const lbl = isJan ? m.getFullYear() : m.toLocaleDateString('en-GB', { month: 'short' });
+      ticks += '<span class="race-tick' + (i % 2 ? ' odd' : '') + (isJan ? ' year' : '') + '" style="left:' + pct(m).toFixed(2) + '%"><i></i>' + lbl + '</span>';
+      m.setMonth(m.getMonth() + 1);
+      i++;
+    }
+
+    // Labels go into lanes (above, below, then further above/below) so two
+    // races a few weeks apart never print on top of each other — on a phone
+    // that's most race pairs. Widths are estimated in % of the track, since
+    // the view may be hidden (0 wide) when this runs.
+    const mobile = window.innerWidth <= CAL_MOBILE_BREAKPOINT;
+    const trackPx = Math.max(240, Math.min(window.innerWidth, 1180) - (mobile ? 90 : 100));
+    const labelPct = ((mobile ? 122 : 176) / trackPx) * 100;
+    const LANES = ['above', 'below', 'above2', 'below2'];
+    const laneEnds = LANES.map(() => -Infinity);
+    let maxAbove = 0, maxBelow = 0;
+    const markers = upcoming.map((r) => {
+      const p = pct(parseLocalDate(r.date));
+      const align = p > 82 ? 'right' : (p < 18 ? 'left' : 'center');
+      const from = align === 'left' ? p : align === 'right' ? p - labelPct : p - labelPct / 2;
+      let lane = LANES.findIndex((_, li) => laneEnds[li] + 1.5 <= from);
+      if (lane === -1) lane = laneEnds.indexOf(Math.min(...laneEnds)); // all full: least-crowded lane
+      laneEnds[lane] = from + labelPct;
+      const above = lane % 2 === 0, depth = lane < 2 ? 1 : 2;
+      if (above) maxAbove = Math.max(maxAbove, depth); else maxBelow = Math.max(maxBelow, depth);
+      const cls = ['race-marker', above ? 'above' : 'below', 'depth-' + depth, 'align-' + align];
+      if (r.status === 'tentative') cls.push('tentative');
+      if (r.kind === 'goal') cls.push('goal');
+      return '<div class="' + cls.join(' ') + '" style="left:' + p.toFixed(2) + '%">' +
+        '<span class="race-marker-dot"></span>' +
+        '<span class="race-marker-label"><b>' + escapeHtml(r.name || 'Race') + '</b>' +
+        escapeHtml(fmtRaceDate(r)) + '</span></div>';
+    }).join('');
+    const marginTop = [22, 76, 130][maxAbove], marginBottom = [34, 88, 142][maxBelow];
+
+    $('raceTimeline').innerHTML =
+      '<div class="race-track" style="margin:' + marginTop + 'px 0 ' + marginBottom + 'px"><span class="race-today" style="left:0%"><i></i>Today</span>' + ticks + markers + '</div>';
+    const lastDays = daysUntil(upcoming[upcoming.length - 1].date);
+    setText('raceSeasonTag', upcoming.length + ' ahead · next ' + Math.round(lastDays / 7) + ' weeks');
+  }
+
+  function renderRaceCard(r) {
+    const days = daysUntil(r.date);
+    const icon = ACTIVITY_ICONS[raceIconKey(r)] || ACTIVITY_ICONS.other;
+    const cls = ['race-card'];
+    if (r.status === 'tentative') cls.push('tentative');
+    if (r.kind === 'goal') cls.push('goal');
+    return '<article class="' + cls.join(' ') + '">' +
+      '<div class="race-card-top">' +
+        '<div class="race-card-days"><span>' + (r.date_approx ? '~' : '') + days + '</span>' + (days === 1 ? 'day' : 'days') + '</div>' +
+        '<div class="race-card-chips">' + raceChips(r) + '</div>' +
+      '</div>' +
+      '<h3 class="race-card-name">' + icon + '<span>' + escapeHtml(r.name || 'Unnamed race') + '</span></h3>' +
+      '<div class="race-when">' + raceWhere(r) + '</div>' +
+      raceFacts(r) +
+      raceExtras(r) +
+    '</article>';
+  }
+
+  function renderRaces(data) {
+    lastRaces = data;
+    const upcoming = (data && data.upcoming) || [];
+    const past = (data && data.past) || [];
+    racesAvailable = upcoming.length > 0;
+    $('viewTabs').hidden = !racesAvailable;
+    setText('racesTabCount', racesAvailable ? String(upcoming.length) : '');
+    if (!racesAvailable) {
+      featuredRace = null;
+      if (currentView === 'races') setView('dashboard');
+      return;
+    }
+
+    // Feature the nearest actual race; a dated goal only takes the spot if
+    // there's no race ahead at all.
+    featuredRace = upcoming.find((r) => r.kind !== 'goal') || upcoming[0];
+    renderRaceFeature(featuredRace);
+    renderRaceTimeline(upcoming);
+
+    const rest = upcoming.filter((r) => r !== featuredRace);
+    $('raceListPanel').hidden = rest.length === 0;
+    $('raceGrid').innerHTML = rest.map(renderRaceCard).join('');
+
+    $('racePastPanel').hidden = past.length === 0;
+    $('racePast').innerHTML = past.map((r) =>
+      '<li><span class="race-past-date">' + escapeHtml(fmtRaceDate(r)) + '</span>' +
+      '<span class="race-past-name">' + escapeHtml(r.name || 'Race') + '</span>' +
+      '<span class="race-past-ago">' + fmtAgoDays(-daysUntil(r.date)) + '</span></li>').join('');
+
+    tickRaceClock();
+  }
+
+  function fmtAgoDays(days) {
+    if (days < 14) return days + ' days ago';
+    if (days < 60) return Math.round(days / 7) + ' weeks ago';
+    return Math.round(days / 30.4) + ' months ago';
+  }
+
+  // Live d/h/m/s to the featured race's start (its start_time if known,
+  // else midnight). Skipped when the date itself is only an estimate —
+  // ticking seconds toward a guessed day would be false precision.
+  function tickRaceClock() {
+    const el = $('raceClock');
+    if (!el || !featuredRace) return;
+    if (featuredRace.date_approx) { el.textContent = ''; return; }
+    const target = parseLocalDate(featuredRace.date);
+    const m = /^(\d{1,2}):(\d{2})/.exec(featuredRace.start_time || '');
+    if (m) target.setHours(+m[1], +m[2], 0, 0);
+    let s = Math.floor((target - new Date()) / 1000);
+    if (s <= 0) { el.textContent = featuredRace.kind === 'goal' ? '' : 'Go!'; return; }
+    const d = Math.floor(s / 86400); s -= d * 86400;
+    const h = Math.floor(s / 3600); s -= h * 3600;
+    const mi = Math.floor(s / 60); s -= mi * 60;
+    el.textContent = d + 'd ' + pad2(h) + 'h ' + pad2(mi) + 'm ' + pad2(s) + 's' + (m ? ' to the gun' : '');
+  }
+
+  function startRaceClock() {
+    tickRaceClock();
+    if (!raceClockTimer) raceClockTimer = setInterval(tickRaceClock, 1000);
+  }
+
+  function stopRaceClock() {
+    if (raceClockTimer) { clearInterval(raceClockTimer); raceClockTimer = null; }
+  }
+
+  let raceResizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(raceResizeTimer);
+    raceResizeTimer = setTimeout(() => { if (lastRaces) renderRaceTimeline(lastRaces.upcoming || []); }, 150);
+  });
+
+  function loadRaces() {
+    return fetch('/api/races')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        renderRaces(data);
+        // First load: honour a #races deep link now that we know the tab exists.
+        if (viewFromHash() === 'races' && currentView !== 'races') setView('races', { updateHash: false });
+      })
+      .catch(() => { /* Races are an extra — a failed fetch just leaves the tab as it was */ });
+  }
+
+  function bindRacePlanLinks() {
+    $('viewRaces').addEventListener('click', (e) => {
+      if (!e.target.closest('[data-goto-plan]')) return;
+      setView('dashboard');
+      const panel = $('racePlanPanel');
+      if (panel && panel.style.display !== 'none') panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
   function render(data) {
     renderError(data.error || null, data.error_type);
     $('liveBadge').textContent = data.error ? 'Error' : 'Live · Garmin Connect';
     applyGenderDefaultTheme(data.training_load);
     renderHero(data);
-    renderRidgeChart(data.ridge_chart);
+    if (currentView === 'dashboard') renderRidgeChart(data.ridge_chart);
+    else pendingRidge = data.ridge_chart;
     renderTrainingLoad(data.training_load);
     renderVitals(data.vitals);
     renderLastWaypoint(data.last_activity);
@@ -1325,7 +1650,11 @@
       try { localStorage.setItem('trainstate-theme', theme); } catch (e) {}
     });
 
-    $('refreshBtn').addEventListener('click', function () { loadDashboard(true); });
+    bindViewTabs();
+    bindRacePlanLinks();
+    loadRaces();
+
+    $('refreshBtn').addEventListener('click', function () { loadDashboard(true); loadRaces(); });
     $('saveReviewBtn').addEventListener('click', saveReview);
     loadDashboard(false);
 
@@ -1341,11 +1670,11 @@
     });
     loadCalendarMonth(calMonth);
 
-    setInterval(function () { loadDashboard(false); }, AUTO_REFRESH_MS);
+    setInterval(function () { loadDashboard(false); loadRaces(); }, AUTO_REFRESH_MS);
 
     // Catch up right away if the tab was backgrounded/asleep past a tick.
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible') loadDashboard(false);
+      if (document.visibilityState === 'visible') { loadDashboard(false); loadRaces(); }
     });
   });
 })();

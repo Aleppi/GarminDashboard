@@ -2509,7 +2509,7 @@ def get_dashboard_payload(client, username: Optional[str] = None) -> dict:
     if username is not None:
         import race_days as race_days_module  # local import: keeps this module Garmin-only otherwise
 
-        race_dates = {r["date"] for r in race_days_module.get_race_days(username)}
+        race_dates = race_days_module.race_dates(username)
 
     readiness_entries = safe_call(client.get_training_readiness, today, default=[]) or []
     if isinstance(readiness_entries, dict):
