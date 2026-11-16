@@ -1795,10 +1795,12 @@
     const past = (data && data.past) || [];
     racesAvailable = upcoming.length > 0;
     $('viewTabs').hidden = !racesAvailable;
-    setText('racesTabCount', racesAvailable ? String(upcoming.length) : '');
-    // Named for what's in it: "Goals" while only goals are set (e.g. a VO2
-    // max target), "Races" as soon as there's an actual race to count down to.
-    setText('racesTabLabel', upcoming.some((r) => r.kind !== 'goal') ? 'Races' : 'Goals');
+    // Named and counted for what's in it: "Races" + number of upcoming races
+    // as soon as there's one; "Goals" + number of goals while there are only
+    // goals (e.g. a VO2 max target). Goals don't add to a "Races" count.
+    const raceCount = upcoming.filter((r) => r.kind !== 'goal').length;
+    setText('racesTabLabel', raceCount ? 'Races' : 'Goals');
+    setText('racesTabCount', racesAvailable ? String(raceCount || upcoming.length) : '');
     if (!racesAvailable) {
       featuredRace = null;
       if (currentView === 'races') setView('dashboard');
