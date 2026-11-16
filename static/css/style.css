@@ -294,13 +294,13 @@
   .delta-good{color:var(--teal-text);font-weight:500;margin-left:8px;font-size:12px;}
 
   /* Vitals: readiness flow */
-  .rf-header{font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;}
-  .readiness-flow{display:flex;align-items:center;gap:14px;margin-bottom:18px;}
-  .rf-block{flex:1;background:var(--panel-2);border:1px solid var(--line);border-radius:3px;padding:12px 14px;}
-  .rf-arrow{color:var(--ink-faint);font-size:20px;}
-  .rf-score{font-family:var(--font-mono);font-weight:600;font-size:26px;}
+  .rf-header{font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}
+  .readiness-flow{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;}
+  .rf-block{min-width:0;background:var(--panel-2);border:1px solid var(--line);border-radius:3px;padding:12px 14px;}
+  .rf-score{font-family:var(--font-mono);font-weight:600;font-size:26px;white-space:nowrap;}
   .rf-score.high{color:var(--teal-text);}
   .rf-score.mod{color:var(--gold);}
+  .rf-score.low{color:var(--rust-text);}
   .rf-tag{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-dim);margin-top:2px;}
   .rf-time{font-size:11.5px;color:var(--ink-faint);margin-top:4px;}
 
@@ -530,8 +530,8 @@
     .panels-grid{grid-template-columns:1fr;}
     .stat-grid{grid-template-columns:repeat(2,1fr);}
     .mini-stats{grid-template-columns:1fr;}
-    .readiness-flow{flex-direction:column;align-items:stretch;}
-    .rf-arrow{text-align:center;transform:rotate(90deg);}
+    .rf-block{padding:11px 12px;}
+    .rf-score{font-size:23px;}
     .cal-cell{font-size:9px;padding:4px 5px 0 0;}
     .cal-cell-icons{left:4px;bottom:4px;gap:3px;}
     .cal-icon{width:13px;height:13px;}

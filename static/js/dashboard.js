@@ -95,13 +95,53 @@
     setText('heroDate', data.date_label || '');
     setText('heroContext', hero.context || '');
 
-    const wake = hero.wake_reading, latest = hero.latest_reading;
-    setText('wakeScore', wake ? fmtOrDash(wake.score) : '—');
-    setText('wakeTag', wake ? (wake.label || '') : 'No data');
-    setText('wakeTime', wake && wake.time ? ('at wake, ' + wake.time) : '');
-    setText('latestScore', latest ? fmtOrDash(latest.score) : '—');
+    const latest = hero.latest_reading;
+    const score = latest ? latest.score : null;
+    setText('latestScore', latest ? fmtOrDash(score) : '—');
     setText('latestTag', latest ? (latest.label || '') : 'No data');
-    setText('latestTime', latest && latest.time ? ('now, ' + latest.time) : '');
+    setText('latestTime', latest && latest.time ? ('as of ' + latest.time) : '');
+    // Garmin's own bands: Poor <25, Low <50, Moderate <75, High/Prime 75+.
+    $('latestScore').className = 'rf-score ' + (typeof score !== 'number' ? '' : score >= 75 ? 'high' : score >= 50 ? 'mod' : 'low');
+  }
+
+  // ------------------------------------------------------- recovery time --
+  let lastRecovery = null;
+
+  function fmtRecoveryLeft(minutes) {
+    if (minutes <= 0) return '0h';
+    const hours = Math.round(minutes / 60);
+    if (hours < 1) return '<1h';
+    if (hours < 24) return hours + 'h';
+    const d = Math.floor(hours / 24), h = hours % 24;
+    return h ? d + 'd ' + h + 'h' : d + 'd';
+  }
+
+  // Counts down live from the absolute clears_at the server sends, so the
+  // box stays right between the (cached, 60s-polled) dashboard payloads.
+  function renderRecovery(rec) {
+    if (rec !== undefined) lastRecovery = rec;
+    rec = lastRecovery;
+    const val = $('recoveryVal');
+    if (!rec) {
+      val.textContent = '—';
+      val.className = 'rf-score';
+      setText('recoveryTag', 'No data');
+      setText('recoveryClears', '');
+      return;
+    }
+    const clears = new Date(rec.clears_at);
+    const left = rec.recovered ? 0 : Math.max(0, (clears - new Date()) / 60000);
+    val.textContent = fmtRecoveryLeft(left);
+    val.className = 'rf-score ' + (left <= 0 ? 'high' : 'mod');
+    if (left <= 0) {
+      setText('recoveryTag', 'Fully recovered');
+      setText('recoveryClears', '');
+    } else {
+      setText('recoveryTag', 'until fully recovered');
+      const sameDay = clears.toDateString() === new Date().toDateString();
+      const when = clears.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      setText('recoveryClears', 'clears ' + (sameDay ? 'today ' : clears.toLocaleDateString('en-GB', { weekday: 'short' }) + ' ') + when);
+    }
   }
 
   // ------------------------------------------------------------ ridge chart -
@@ -775,6 +815,7 @@
   function renderVitals(vitals) {
     vitals = vitals || {};
     renderFactors(vitals.factors);
+    renderRecovery(vitals.recovery || null);
 
     const fa = vitals.fitness_age;
     setText('fitnessAgeVal', fa ? (fa.fitness_age + ' yr') : '—');
@@ -1674,6 +1715,7 @@
     loadCalendarMonth(calMonth);
 
     setInterval(function () { loadDashboard(false); loadRaces(); }, AUTO_REFRESH_MS);
+    setInterval(function () { renderRecovery(); }, 30 * 1000);
 
     // Catch up right away if the tab was backgrounded/asleep past a tick.
     document.addEventListener('visibilitychange', function () {

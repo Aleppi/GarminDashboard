@@ -281,6 +281,7 @@ def build_vitals_factors(readiness_entry: Optional[dict]) -> list[dict]:
                     feedback = None  # "Recovered · Poor" would read as a contradiction
         factors.append(
             {
+                "key": prefix,
                 "label": humanize_key(key),
                 "pct": value if has_data else None,
                 "status": "good" if (has_data and value >= 70) else "mod",
@@ -858,6 +859,22 @@ def build_fitness_age(client, today: str) -> Optional[dict]:
     }
 
 
+def build_recovery(latest: Optional[dict]) -> Optional[dict]:
+    """Recovery-time box: when recovery clears as an absolute UTC instant,
+    so the page can count down live between (cached) dashboard polls
+    instead of freezing whatever was left when the payload was built."""
+    remaining = recovery_remaining_minutes(latest)
+    if remaining is None:
+        return None
+    clears = datetime.now(timezone.utc) + timedelta(minutes=remaining)
+    return {
+        "recovered": remaining <= 0,
+        "remaining_minutes": round(remaining),
+        "clears_at": clears.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "feedback": to_title((latest or {}).get("recoveryTimeFactorFeedback")),
+    }
+
+
 def build_vitals(client, today: str, readiness_entries: list[dict]) -> dict:
     latest = None
     if readiness_entries:
@@ -878,7 +895,10 @@ def build_vitals(client, today: str, readiness_entries: list[dict]) -> dict:
         )
 
     return {
-        "factors": factors,
+        # Recovery time gets its own box next to readiness instead of a row
+        # here (it's still in `factors` for the readiness context sentence).
+        "factors": [f for f in factors if f["key"] != "recoveryTime"],
+        "recovery": build_recovery(latest),
         "body_battery": body_battery,
         "last_sleep": last_sleep,
         "resting_hr": resting_hr,

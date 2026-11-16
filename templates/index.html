@@ -131,18 +131,18 @@
     <!-- VITALS -->
     <section class="panel">
       <h2>Vitals</h2>
-      <div class="rf-header">Training Readiness<span class="help-mark" data-tooltip="Garmin's Training Readiness score (0-100) — how prepared your body is to train right now. Blends sleep quality, HRV status, recovery time since your last session, recent sleep history, acute:chronic training load, and stress. Shown at wake and again now, so you can see how it's shifted through the day.">?</span></div>
       <div class="readiness-flow">
         <div class="rf-block">
-          <div class="rf-score mod" id="wakeScore">—</div>
-          <div class="rf-tag" id="wakeTag"></div>
-          <div class="rf-time" id="wakeTime"></div>
-        </div>
-        <div class="rf-arrow">→</div>
-        <div class="rf-block">
-          <div class="rf-score mod" id="latestScore">—</div>
+          <div class="rf-header">Training Readiness<span class="help-mark" data-tooltip="Garmin's Training Readiness score (0-100) — how prepared your body is to train right now. Blends sleep quality, HRV status, recovery time, recent sleep history, acute:chronic training load, and stress; the bars below show how each is contributing. This is Garmin's most recent reading.">?</span></div>
+          <div class="rf-score" id="latestScore">—</div>
           <div class="rf-tag" id="latestTag"></div>
           <div class="rf-time" id="latestTime"></div>
+        </div>
+        <div class="rf-block">
+          <div class="rf-header">Recovery Time<span class="help-mark" data-tooltip="Garmin's estimate of how long until you've fully recovered from recent training, counting down from its last reading. Easy sessions are fine while it runs; save hard efforts for when it's at or near zero.">?</span></div>
+          <div class="rf-score" id="recoveryVal">—</div>
+          <div class="rf-tag" id="recoveryTag"></div>
+          <div class="rf-time" id="recoveryClears"></div>
         </div>
       </div>
 
