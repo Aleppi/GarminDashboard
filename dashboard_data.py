@@ -95,13 +95,18 @@ def fmt_distance(meters: Optional[float], activity_type: str = "", is_leg: bool 
     decimals = 2 if is_leg else 1
     return f"{km:.{decimals}f} km"
 
-def fmt_pace_or_speed(distance: Optional[float], duration: Optional[float], type_key: str) -> str:
-    """Sport-appropriate pace/speed string: running/hiking -> min:sec/km
-    pace, cycling -> km/h average speed, swimming -> min:sec/100m pace.
-    Anything else (strength, etc.) has no meaningful pace, so this is "—"."""
+def fmt_pace_or_speed(
+    distance: Optional[float], duration: Optional[float], type_key: str, avg_power: Optional[float] = None,
+) -> str:
+    """Sport-appropriate effort figure for the activity tables: running/hiking
+    -> min:sec/km pace, cycling -> average power in watts (falling back to
+    km/h average speed when the ride has no power data), swimming ->
+    min:sec/100m pace. Anything else (strength, etc.) has none, so "—"."""
+    t = (type_key or "").lower()
+    if any(hint in t for hint in CYCLING_TYPE_HINTS) and _has_power(avg_power):
+        return f"{round(avg_power)} W"
     if not distance or not duration:
         return "—"
-    t = (type_key or "").lower()
     if RUN_TYPE_HINT in t or any(hint in t for hint in HIKE_TYPE_HINTS):
         m, s = divmod(int(round(duration / (distance / 1000))), 60)
         return f"{m}:{s:02d} /km"
@@ -113,13 +118,17 @@ def fmt_pace_or_speed(distance: Optional[float], duration: Optional[float], type
     return "—"
 
 
-def pace_label_for(type_key: str) -> str:
-    """Column/row label matching what fmt_pace_or_speed actually returns for
-    this sport — "Speed" for cycling (km/h), "Pace" for everything else that
-    has one (running/hiking min:sec/km, swimming min:sec/100m)."""
+def _has_power(avg_power: Optional[float]) -> bool:
+    return isinstance(avg_power, (int, float)) and avg_power > 0
+
+
+def pace_label_for(type_key: str, avg_power: Optional[float] = None) -> str:
+    """Label matching what fmt_pace_or_speed actually returned for this
+    activity — "Power" for a ride with power data, "Speed" for one without,
+    "Pace" for everything else that has one."""
     t = (type_key or "").lower()
     if any(hint in t for hint in CYCLING_TYPE_HINTS):
-        return "Speed"
+        return "Power" if _has_power(avg_power) else "Speed"
     return "Pace"
 
 
@@ -1036,18 +1045,22 @@ def summarize_activity(activity: dict, is_leg: bool = False) -> dict:
     duration = activity.get("duration") or activity.get("movingDuration")
     avg_hr = activity.get("averageHR")
     max_hr = activity.get("maxHR")
+    # List endpoint says avgPower; single-activity summaryDTO (multisport legs) says averagePower.
+    avg_power = activity.get("avgPower")
+    if avg_power is None:
+        avg_power = activity.get("averagePower")
     return {
         "activity_id": activity.get("activityId"),
         "name": leg_label(activity) if is_leg else (activity.get("activityName") or type_key.replace("_", " ").title()),
         "type_key": type_key,
         "distance": fmt_distance(distance, type_key, is_leg=is_leg),
         "duration": fmt_duration(duration),
-        "pace": fmt_pace_or_speed(distance, duration, type_key),
-        "pace_label": pace_label_for(type_key),
+        "pace": fmt_pace_or_speed(distance, duration, type_key, avg_power),
+        "pace_label": pace_label_for(type_key, avg_power),
         "avg_hr": fmt_int(avg_hr) if avg_hr else (f"max {fmt_int(max_hr)}" if max_hr else "—"),
         "elevation_gain": fmt_elevation(activity.get("elevationGain")),
         "calories": fmt_int(activity.get("calories")) or "—",
-        "avg_power": fmt_int(activity.get("avgPower")),
+        "avg_power": fmt_int(avg_power),
         "date": (activity.get("startTimeLocal") or "")[:10],
         "training_load": activity.get("activityTrainingLoad"),
     }
