@@ -25,6 +25,8 @@ from dashboard_data import (
     build_activity_calendar,
     build_activity_training_load,
     build_metric_history,
+    build_vitals_history,
+    VITALS_HISTORY_METRICS,
     build_trend_range,
     coach_note_is_stale,
     get_dashboard_payload,
@@ -334,7 +336,7 @@ def api_activities():
     return jsonify({"days": days})
 
 
-VALID_HISTORY_METRICS = {"vo2_run", "vo2_bike", "endurance"}
+VALID_HISTORY_METRICS = {"vo2_run", "vo2_bike", "endurance"} | VITALS_HISTORY_METRICS
 
 
 @app.route("/api/metric-history")
@@ -363,7 +365,10 @@ def api_metric_history():
     except GarminUnavailable as exc:
         return jsonify({"error": str(exc), "error_type": "unavailable"}), 200
 
-    payload = build_metric_history(client, metric, today_str)
+    if metric in VITALS_HISTORY_METRICS:
+        payload = build_vitals_history(client, metric, today_str)
+    else:
+        payload = build_metric_history(client, metric, today_str)
     with _cache_lock:
         _range_caches[cache_key] = {"payload": payload, "fetched_at": time.time()}
     return jsonify(payload)

@@ -148,14 +148,25 @@
 
       <div id="factorRows"></div>
 
+      <!-- Each box expands in place (full row width) to show its detail;
+           only one is open at a time — see bindVitalBoxes. -->
       <div class="mini-stats">
-        <div class="mini-stat"><div class="v" id="fitnessAgeVal">—</div><div class="l">Fitness Age</div><div class="d" id="fitnessAgeDetail"></div></div>
-        <div class="mini-stat"><div class="v" id="rhrVal">—</div><div class="l">Resting HR</div><div class="d" id="rhrDetail"></div></div>
-        <div class="mini-stat sleep-box" id="sleepBox" role="button" tabindex="0" aria-expanded="false" aria-controls="sleepStages">
-          <div class="v" id="sleepVal">—</div><div class="l">Last Sleep<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="sleepDetail"></div>
-          <div class="sleep-stages" id="sleepStages" hidden></div>
+        <div class="mini-stat ms-box" id="fitnessAgeBox" data-vital="fitness_age" role="button" tabindex="0" aria-expanded="false" aria-controls="fitnessAgeChart">
+          <div class="v" id="fitnessAgeVal">—</div><div class="l">Fitness Age<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="fitnessAgeDetail"></div>
+          <div class="ms-detail" id="fitnessAgeChart" hidden></div>
         </div>
-        <div class="mini-stat"><div class="v" id="batteryVal">—</div><div class="l">Body Battery</div><div class="d" id="batteryDetail"></div></div>
+        <div class="mini-stat ms-box" id="rhrBox" data-vital="rhr" role="button" tabindex="0" aria-expanded="false" aria-controls="rhrChart">
+          <div class="v" id="rhrVal">—</div><div class="l">Resting HR<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="rhrDetail"></div>
+          <div class="ms-detail" id="rhrChart" hidden></div>
+        </div>
+        <div class="mini-stat ms-box" id="sleepBox" data-vital="sleep" role="button" tabindex="0" aria-expanded="false" aria-controls="sleepStages">
+          <div class="v" id="sleepVal">—</div><div class="l">Last Sleep<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="sleepDetail"></div>
+          <div class="ms-detail sleep-stages" id="sleepStages" hidden></div>
+        </div>
+        <div class="mini-stat ms-box" id="batteryBox" data-vital="body_battery" role="button" tabindex="0" aria-expanded="false" aria-controls="batteryChart">
+          <div class="v" id="batteryVal">—</div><div class="l">Body Battery<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="batteryDetail"></div>
+          <div class="ms-detail" id="batteryChart" hidden></div>
+        </div>
       </div>
 
       <div class="gap-callout" id="gapCallout" style="display:none;"></div>

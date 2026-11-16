@@ -797,19 +797,269 @@
     panel.innerHTML = '<div class="sleep-bar">' + bar + '</div><div class="sleep-stage-rows">' + rows + '</div>';
   }
 
-  function bindSleepBox() {
-    const box = $('sleepBox');
-    if (!box || !$('sleepStages')) return;
-    const toggle = () => {
-      const open = !box.classList.contains('open');
+  // ---------------------------------------------------- vitals detail boxes --
+  // Fitness Age / Resting HR / Last Sleep / Body Battery each expand in place
+  // to full row width; opening one closes whichever else was open. Sleep's
+  // detail is already in the dashboard payload; the three charts load their
+  // history on first open from /api/metric-history (server-cached).
+  const VITAL_CHART_TTL_MS = 10 * 60 * 1000;
+  const vitalHistory = {}; // metric -> {data, fetchedAt} | {promise}
+  let openVital = null;
+
+  function bindVitalBoxes() {
+    const boxes = Array.from(document.querySelectorAll('.ms-box'));
+    const setOpen = (box, open) => {
       box.classList.toggle('open', open);
       box.setAttribute('aria-expanded', String(open));
-      $('sleepStages').hidden = !open;
+      box.querySelector('.ms-detail').hidden = !open;
     };
-    box.addEventListener('click', toggle);
-    box.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    const toggle = (box) => {
+      const opening = !box.classList.contains('open');
+      boxes.forEach((b) => setOpen(b, b === box && opening));
+      openVital = opening ? box.dataset.vital : null;
+      if (opening && box.dataset.vital !== 'sleep') loadVitalChart(box.dataset.vital);
+    };
+    boxes.forEach((box) => {
+      box.addEventListener('click', (e) => {
+        // Interacting with an open chart (hover/tap for values) shouldn't
+        // collapse it — only the box's own header area toggles.
+        if (e.target.closest('.ms-detail')) return;
+        toggle(box);
+      });
+      box.addEventListener('keydown', (e) => {
+        if (e.target !== box) return;
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(box); }
+      });
     });
+    let t = null;
+    window.addEventListener('resize', () => {
+      if (!openVital || openVital === 'sleep') return;
+      clearTimeout(t);
+      t = setTimeout(() => {
+        const cached = vitalHistory[openVital];
+        if (cached && cached.data) renderVitalChart(openVital, cached.data);
+      }, 180);
+    });
+  }
+
+  function vitalChartEl(metric) {
+    return $({ fitness_age: 'fitnessAgeChart', rhr: 'rhrChart', body_battery: 'batteryChart' }[metric]);
+  }
+
+  function loadVitalChart(metric) {
+    const el = vitalChartEl(metric);
+    const cached = vitalHistory[metric];
+    if (cached && cached.data && Date.now() - cached.fetchedAt < VITAL_CHART_TTL_MS) {
+      renderVitalChart(metric, cached.data);
+      return;
+    }
+    if (cached && cached.promise) return;
+    if (!(cached && cached.data)) el.innerHTML = '<div class="mc-empty">Loading from Garmin…</div>';
+    const promise = fetch('/api/metric-history?metric=' + encodeURIComponent(metric))
+      .then((r) => r.json())
+      .then((data) => {
+        vitalHistory[metric] = { data, fetchedAt: Date.now() };
+        if (openVital === metric) renderVitalChart(metric, data);
+      })
+      .catch((err) => {
+        vitalHistory[metric] = null;
+        if (openVital === metric) el.innerHTML = '<div class="mc-empty">Couldn’t load this from Garmin: ' + escapeHtml(String(err)) + '</div>';
+      });
+    vitalHistory[metric] = Object.assign({}, cached || {}, { promise });
+  }
+
+  function renderVitalChart(metric, data) {
+    const el = vitalChartEl(metric);
+    if (data.error) {
+      el.innerHTML = '<div class="mc-empty">' + escapeHtml(data.error) + '</div>';
+      return;
+    }
+    if (metric === 'body_battery') return renderBodyBatteryChart(el, data);
+    if (metric === 'rhr') return renderRhrChart(el, data);
+    if (metric === 'fitness_age') return renderFitnessAgeChart(el, data);
+  }
+
+  function vitalHead(title, meta) {
+    return '<div class="mc-head"><span class="mc-title">' + escapeHtml(title) + '</span>' +
+      '<span class="mc-meta">' + escapeHtml(meta || '') + '</span></div>';
+  }
+
+  function fmtClock(ms) {
+    return new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function renderBodyBatteryChart(el, data) {
+    const pts = (data.points || []).filter((p) => typeof p.t === 'number');
+    const measured = pts.filter((p) => typeof p.value === 'number');
+    if (!measured.length) {
+      el.innerHTML = vitalHead('Body Battery — today', '') + '<div class="mc-empty">No body battery recorded yet today.</div>';
+      return;
+    }
+    const vals = measured.map((p) => p.value);
+    const meta = [
+      data.charged != null ? '+' + data.charged + ' charged' : null,
+      data.drained != null ? '−' + data.drained + ' drained' : null,
+      'low ' + Math.min.apply(null, vals) + ' · high ' + Math.max.apply(null, vals),
+    ].filter(Boolean).join(' · ');
+    el.innerHTML = vitalHead('Body Battery — today', meta) + '<div class="vc-plot"></div>';
+    const plot = el.querySelector('.vc-plot');
+    const x0 = pts[0].t, x1 = Math.max(pts[pts.length - 1].t, x0 + 3600000);
+    const narrow = (plot.clientWidth || 600) < 420;
+    const ticks = [];
+    const d = new Date(x0); d.setMinutes(0, 0, 0);
+    const step = narrow ? 6 : 3;
+    d.setHours(Math.ceil(d.getHours() / step) * step);
+    for (; d.getTime() <= x1; d.setHours(d.getHours() + step)) ticks.push({ x: d.getTime(), label: pad2(d.getHours()) + ':00' });
+    drawVitalChart(plot, {
+      height: 170,
+      xDomain: [x0, x1], yDomain: [0, 100], yTicks: [0, 25, 50, 75, 100],
+      xTicks: ticks,
+      series: [{ cls: 'teal', area: true, points: pts.map((p) => ({ x: p.t, y: p.value })) }],
+      tip: (i) => '<b>' + pts[i].value + '</b><span class="mc-tip-date">' + fmtClock(pts[i].t) + '</span>',
+    });
+  }
+
+  function renderRhrChart(el, data) {
+    const pts = data.points || [];
+    if (!pts.length) {
+      el.innerHTML = vitalHead('Resting HR — last 7 days', '') + '<div class="mc-empty">No resting HR recorded in the last 7 days.</div>';
+      return;
+    }
+    const vals = pts.map((p) => p.value);
+    const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    const avg = data.avg;
+    el.innerHTML = vitalHead('Resting HR — last 7 days',
+      (avg != null ? '7-day avg ' + avg.toFixed(1) + ' bpm · ' : '') + 'range ' + lo + '–' + hi) + '<div class="vc-plot"></div>';
+    const yLo = Math.floor(Math.min(lo, avg || lo) - 3), yHi = Math.ceil(Math.max(hi, avg || hi) + 3);
+    drawVitalChart(el.querySelector('.vc-plot'), {
+      height: 160,
+      xDomain: [-0.5, pts.length - 0.5], yDomain: [yLo, yHi], yTicks: [yLo, yHi],
+      xTicks: pts.map((p, i) => ({ x: i, label: parseLocalDate(p.date).toLocaleDateString('en-GB', { weekday: 'short' }) })),
+      refLines: avg != null ? [{ y: avg, label: 'avg ' + avg.toFixed(1) }] : [],
+      series: [{ cls: 'gold', dots: true, points: pts.map((p, i) => ({ x: i, y: p.value })) }],
+      tip: (i) => '<b>' + pts[i].value + '</b> bpm<span class="mc-tip-date">' +
+        parseLocalDate(pts[i].date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) + '</span>',
+    });
+  }
+
+  function renderFitnessAgeChart(el, data) {
+    const pts = data.points || [];
+    if (!pts.length) {
+      el.innerHTML = vitalHead('Fitness Age', '') + '<div class="mc-empty">No fitness age history from Garmin yet.</div>';
+      return;
+    }
+    const first = pts[0], last = pts[pts.length - 1];
+    const change = last.fitness - first.fitness;
+    el.innerHTML = vitalHead('Fitness Age',
+      (change <= 0 ? '' : '+') + change.toFixed(1) + ' yr since ' + fmtShortDate(first.date)) +
+      '<div class="vc-legend">' +
+        '<span><i class="vc-swatch gold"></i>Fitness age</span>' +
+        '<span><i class="vc-swatch teal dashed"></i>Achievable</span>' +
+        '<span><i class="vc-swatch faint dashed"></i>Actual age</span>' +
+      '</div><div class="vc-plot"></div>';
+    const xs = pts.map((p) => parseLocalDate(p.date).getTime());
+    const all = [];
+    pts.forEach((p) => ['fitness', 'achievable', 'chrono'].forEach((k) => { if (typeof p[k] === 'number') all.push(p[k]); }));
+    const yLo = Math.floor(Math.min.apply(null, all) - 1), yHi = Math.ceil(Math.max.apply(null, all) + 1);
+    const ticks = [];
+    const m = new Date(xs[0]); m.setDate(1); m.setMonth(m.getMonth() + 1);
+    for (; m.getTime() <= xs[xs.length - 1]; m.setMonth(m.getMonth() + 1)) {
+      ticks.push({ x: m.getTime(), label: m.toLocaleDateString('en-GB', { month: 'short' }) });
+    }
+    const line = (k) => pts.map((p, i) => ({ x: xs[i], y: typeof p[k] === 'number' ? p[k] : null }));
+    const fmt = (v) => (typeof v === 'number' ? v.toFixed(1).replace(/\.0$/, '') : '—');
+    drawVitalChart(el.querySelector('.vc-plot'), {
+      height: 180,
+      xDomain: [xs[0], Math.max(xs[xs.length - 1], xs[0] + 86400000)], yDomain: [yLo, yHi], yTicks: [yLo, yHi],
+      xTicks: ticks,
+      series: [
+        { cls: 'faint', dashed: true, points: line('chrono') },
+        { cls: 'teal', dashed: true, points: line('achievable') },
+        { cls: 'gold', points: line('fitness'), lastDot: true },
+      ],
+      tipSeries: 2,
+      tip: (i) => '<b>' + fmt(pts[i].fitness) + '</b> fitness age' +
+        '<span class="mc-tip-date">achievable ' + fmt(pts[i].achievable) + ' · actual ' + fmt(pts[i].chrono) + '</span>' +
+        '<span class="mc-tip-date">' + fmtShortDate(pts[i].date) + '</span>',
+    });
+  }
+
+  // Minimal shared line chart for the vitals boxes: 1:1 pixel viewBox (same
+  // reasoning as the ridge/metric charts — text and strokes never stretch),
+  // null y breaks the line, hover/tap shows the nearest point.
+  function drawVitalChart(plot, cfg) {
+    const W = Math.max(260, plot.clientWidth || 600), H = cfg.height || 170;
+    const padL = 30, padR = 10, padT = 10, padB = 22;
+    const [x0, x1] = cfg.xDomain, [y0, y1] = cfg.yDomain;
+    const xAt = (x) => padL + ((x - x0) / ((x1 - x0) || 1)) * (W - padL - padR);
+    const yAt = (y) => padT + (1 - (y - y0) / ((y1 - y0) || 1)) * (H - padT - padB);
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" class="vc-svg">';
+    (cfg.yTicks || []).forEach((v) => {
+      svg += '<line class="mc-gridline" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yAt(v) + '" y2="' + yAt(v) + '"/>' +
+        '<text class="mc-axis" x="' + (padL - 5) + '" y="' + (yAt(v) + 3) + '" text-anchor="end">' + v + '</text>';
+    });
+    (cfg.xTicks || []).forEach((t) => {
+      const x = xAt(t.x);
+      if (x < padL - 1 || x > W - padR + 1) return;
+      svg += '<text class="mc-axis" x="' + x + '" y="' + (H - 6) + '" text-anchor="middle">' + escapeHtml(t.label) + '</text>';
+    });
+    (cfg.refLines || []).forEach((r) => {
+      svg += '<line class="vc-ref" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yAt(r.y) + '" y2="' + yAt(r.y) + '"/>' +
+        '<text class="vc-ref-label" x="' + (W - padR - 2) + '" y="' + (yAt(r.y) - 4) + '" text-anchor="end">' + escapeHtml(r.label) + '</text>';
+    });
+    cfg.series.forEach((s) => {
+      let d = '', pen = false, areaD = '', segStart = null, prevX = null;
+      const closeArea = () => {
+        if (s.area && segStart !== null) areaD += ' L' + prevX.toFixed(1) + ',' + yAt(y0) + ' L' + segStart.toFixed(1) + ',' + yAt(y0) + ' Z';
+        segStart = null;
+      };
+      s.points.forEach((p) => {
+        if (p.y === null || p.y === undefined) { pen = false; closeArea(); return; }
+        const x = xAt(p.x), y = yAt(p.y);
+        d += (pen ? ' L' : ' M') + x.toFixed(1) + ',' + y.toFixed(1);
+        if (s.area) areaD += (segStart === null ? ' M' : ' L') + x.toFixed(1) + ',' + y.toFixed(1);
+        if (segStart === null) segStart = x;
+        prevX = x; pen = true;
+      });
+      closeArea();
+      if (s.area && areaD) svg += '<path class="vc-area ' + s.cls + '" d="' + areaD + '"/>';
+      svg += '<path class="vc-line ' + s.cls + (s.dashed ? ' dashed' : '') + '" d="' + d + '"/>';
+      if (s.dots) s.points.forEach((p) => { if (p.y != null) svg += '<circle class="vc-dot ' + s.cls + '" cx="' + xAt(p.x) + '" cy="' + yAt(p.y) + '" r="3"/>'; });
+      if (s.lastDot) {
+        const lp = s.points.filter((p) => p.y != null).pop();
+        if (lp) svg += '<circle class="mc-dot-last" cx="' + xAt(lp.x) + '" cy="' + yAt(lp.y) + '" r="4"/>';
+      }
+    });
+    svg += '<line class="vc-guide" x1="0" x2="0" y1="' + padT + '" y2="' + (H - padB) + '" visibility="hidden"/>' +
+      '<circle class="vc-focus" r="4.5" cx="0" cy="0" visibility="hidden"/></svg>';
+    plot.innerHTML = svg + '<div class="mc-tip vc-tip" style="display:none;"></div>';
+
+    // Hover/tap: nearest point (by x) on the series the tooltip describes.
+    const svgEl = plot.querySelector('svg'), tip = plot.querySelector('.vc-tip');
+    const guide = svgEl.querySelector('.vc-guide'), focus = svgEl.querySelector('.vc-focus');
+    const ser = cfg.series[cfg.tipSeries || 0];
+    const idx = ser.points.map((p, i) => (p.y != null ? i : -1)).filter((i) => i >= 0);
+    const hide = () => { tip.style.display = 'none'; guide.setAttribute('visibility', 'hidden'); focus.setAttribute('visibility', 'hidden'); };
+    const show = (e) => {
+      if (!idx.length) return;
+      const rect = svgEl.getBoundingClientRect();
+      const scale = rect.width / W || 1;
+      const mx = (e.clientX - rect.left) / scale;
+      let best = idx[0], bestDist = Infinity;
+      idx.forEach((i) => { const dist = Math.abs(xAt(ser.points[i].x) - mx); if (dist < bestDist) { bestDist = dist; best = i; } });
+      const px = xAt(ser.points[best].x), py = yAt(ser.points[best].y);
+      guide.setAttribute('x1', px); guide.setAttribute('x2', px); guide.setAttribute('visibility', 'visible');
+      focus.setAttribute('cx', px); focus.setAttribute('cy', py); focus.setAttribute('class', 'vc-focus ' + ser.cls); focus.setAttribute('visibility', 'visible');
+      tip.innerHTML = cfg.tip(best);
+      tip.style.display = 'block';
+      let left = px * scale + 12;
+      if (left + tip.offsetWidth > plot.clientWidth) left = px * scale - tip.offsetWidth - 12;
+      tip.style.left = Math.max(0, left) + 'px';
+      tip.style.top = Math.max(0, py * scale - tip.offsetHeight - 10) + 'px';
+    };
+    svgEl.addEventListener('pointermove', show);
+    svgEl.addEventListener('pointerdown', show);
+    svgEl.addEventListener('pointerleave', hide);
   }
 
   function renderVitals(vitals) {
@@ -1678,7 +1928,7 @@
   document.addEventListener('DOMContentLoaded', function () {
     bindHelpTooltips();
     bindMetricTiles();
-    bindSleepBox();
+    bindVitalBoxes();
 
     const themeSwitcher = $('themeSwitcher');
     let savedTheme = 'default';

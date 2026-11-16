@@ -326,16 +326,38 @@
   .mini-stat .l{font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.05em;}
   .mini-stat .d{font-size:11.5px;color:var(--ink-faint);margin-top:3px;}
 
-  /* Clickable Last Sleep box -> stage breakdown */
-  .sleep-box{
+  /* Clickable Vitals boxes (fitness age, resting HR, sleep, body battery):
+     each expands in place to full row width, one open at a time. */
+  .ms-box{
     background:var(--panel-2);border:1px solid var(--line);border-radius:3px;padding:8px 10px;
-    cursor:pointer;transition:border-color .15s,background .15s;
+    cursor:pointer;transition:border-color .15s,background .15s;min-width:0;
   }
-  .sleep-box:hover{border-color:var(--gold);}
-  .sleep-box:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
-  .sleep-box.open{grid-column:1 / -1;border-color:var(--gold);background:var(--gold-soft);}
-  .sleep-box.open .expand-caret{transform:rotate(180deg);color:var(--gold);}
-  .sleep-stages{margin-top:10px;}
+  .ms-box:hover{border-color:var(--gold);}
+  .ms-box:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  .ms-box.open{grid-column:1 / -1;border-color:var(--gold);background:var(--gold-soft);}
+  .ms-box.open .expand-caret{transform:rotate(180deg);color:var(--gold);}
+  .ms-detail{margin-top:10px;cursor:default;}
+  .ms-detail .mc-head{margin-bottom:6px;}
+
+  /* Vitals detail charts */
+  .vc-plot{position:relative;}
+  .vc-plot svg{display:block;width:100%;height:auto;touch-action:pan-y;}
+  .vc-line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;}
+  .vc-line.dashed{stroke-width:1.5;stroke-dasharray:5 4;}
+  .vc-line.gold{stroke:var(--gold);} .vc-line.teal{stroke:var(--teal);} .vc-line.faint{stroke:var(--ink-faint);}
+  .vc-area.teal{fill:var(--teal-soft);stroke:none;}
+  .vc-dot.gold{fill:var(--gold);}
+  .vc-ref{stroke:var(--ink-dim);stroke-width:1;stroke-dasharray:3 3;}
+  .vc-ref-label{font-family:var(--font-mono);font-size:9.5px;fill:var(--ink-dim);}
+  .vc-guide{stroke:var(--ink-faint);stroke-width:1;stroke-dasharray:2 3;}
+  .vc-focus{stroke:var(--panel-2);stroke-width:2;}
+  .vc-focus.gold{fill:var(--gold);} .vc-focus.teal{fill:var(--teal);}
+  .vc-tip{pointer-events:none;}
+  .vc-legend{display:flex;flex-wrap:wrap;gap:14px;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-dim);margin-bottom:6px;}
+  .vc-legend span{display:inline-flex;align-items:center;gap:6px;}
+  .vc-swatch{display:inline-block;width:16px;height:0;border-top:2px solid;}
+  .vc-swatch.gold{border-color:var(--gold);} .vc-swatch.teal{border-color:var(--teal);} .vc-swatch.faint{border-color:var(--ink-faint);}
+  .vc-swatch.dashed{border-top-style:dashed;}
   .sleep-bar{display:flex;height:10px;border-radius:2px;overflow:hidden;background:var(--line);gap:1px;}
   .sleep-bar span{display:block;height:100%;}
   .sleep-stage-rows{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin-top:10px;}

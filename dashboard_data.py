@@ -663,6 +663,105 @@ def build_metric_history(client, metric: str, today: str) -> dict:
     return {"error": f"unknown metric '{metric}'"}
 
 
+# ------------------------------------------------- vitals detail charts --
+# Behind the expandable Vitals boxes; served through the same
+# /api/metric-history endpoint (and cache) as the VO2/endurance tiles.
+
+VITALS_HISTORY_METRICS = {"body_battery", "rhr", "fitness_age"}
+FITNESS_AGE_HISTORY_DAYS = int(os.getenv("DASHBOARD_FITNESS_AGE_HISTORY_DAYS", "182"))
+FITNESS_AGE_CHUNK_DAYS = 27  # Garmin rejects fitness-age stat ranges of 29+ days
+
+
+def build_vitals_history(client, metric: str, today: str) -> dict:
+    today_d = date.fromisoformat(today)
+
+    if metric == "body_battery":
+        # The body-battery summary endpoint only carries a handful of points;
+        # the full 3-minute curve Garmin's own chart draws lives on the
+        # daily stress response.
+        stress = safe_call(client.get_stress_data, today, default=None) or {}
+        descriptors = {d.get("bodyBatteryValueDescriptorKey"): d.get("bodyBatteryValueDescriptorIndex")
+                       for d in stress.get("bodyBatteryValueDescriptorsDTOList") or []}
+        ts_i, lvl_i = descriptors.get("timestamp", 0), descriptors.get("bodyBatteryLevel", 2)
+        points = []
+        for row in stress.get("bodyBatteryValuesArray") or []:
+            if not isinstance(row, list) or len(row) <= max(ts_i, lvl_i):
+                continue
+            ts, level = row[ts_i], row[lvl_i]
+            if isinstance(ts, (int, float)):
+                # Unmeasured stretches (watch off) come through as None and
+                # are kept, so the chart breaks the line there.
+                points.append({"t": int(ts), "value": level if isinstance(level, (int, float)) else None})
+        summary = safe_call(client.get_body_battery, today, default=None)
+        summary = summary[0] if isinstance(summary, list) and summary else {}
+        return {
+            "metric": metric,
+            "label": "Body Battery — today",
+            "points": points,
+            "charged": fmt_int(summary.get("charged")),
+            "drained": fmt_int(summary.get("drained")),
+        }
+
+    if metric == "rhr":
+        start = (today_d - timedelta(days=6)).isoformat()
+        rows = safe_call(client.get_rhr_daily, start, today, default=None) or []
+        points = []
+        for entry in rows if isinstance(rows, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            v = entry.get("value")
+            if v is None:
+                v = dig(entry, "allMetrics", "metricsMap", "WELLNESS_RESTING_HEART_RATE")
+                v = v[0].get("value") if isinstance(v, list) and v else None
+            day = entry.get("calendarDate")
+            if isinstance(v, (int, float)) and day:
+                points.append({"date": day, "value": round(v)})
+        points.sort(key=lambda p: p["date"])
+        values = [p["value"] for p in points]
+        return {
+            "metric": metric,
+            "label": "Resting HR — last 7 days",
+            "unit": "bpm",
+            "points": points,
+            "avg": round(sum(values) / len(values), 1) if values else None,
+        }
+
+    if metric == "fitness_age":
+        profile = safe_call(client.get_user_profile, default=None) or {}
+        birth = dig(profile, "userData", "birthDate")
+        current = safe_call(client.get_fitnessage_data, today, default=None) or {}
+        fallback_chrono = current.get("chronologicalAge")
+        by_day: dict[str, dict] = {}
+        end = today_d
+        start_limit = today_d - timedelta(days=FITNESS_AGE_HISTORY_DAYS)
+        while end > start_limit:
+            start = max(start_limit, end - timedelta(days=FITNESS_AGE_CHUNK_DAYS - 1))
+            rows = safe_call(client.connectapi,
+                             f"/fitnessage-service/stats/daily/{start.isoformat()}/{end.isoformat()}",
+                             default=None) or []
+            for row in rows if isinstance(rows, list) else []:
+                day, vals = row.get("calendarDate"), row.get("values") or {}
+                fa = vals.get("fitnessAge")
+                if day and isinstance(fa, (int, float)):
+                    ach = vals.get("achievableFitnessAge")
+                    chrono = calc_age(birth, date.fromisoformat(day)) if birth else None
+                    by_day[day] = {
+                        "date": day,
+                        "fitness": round(fa, 1),
+                        "achievable": round(ach, 1) if isinstance(ach, (int, float)) else None,
+                        "chrono": chrono if chrono is not None else fallback_chrono,
+                    }
+            end = start - timedelta(days=1)
+        return {
+            "metric": metric,
+            "label": "Fitness Age",
+            "unit": "yr",
+            "points": [by_day[d] for d in sorted(by_day)],
+        }
+
+    return {"error": f"unknown metric '{metric}'"}
+
+
 def build_training_load(client, today: str) -> dict:
     status = safe_call(client.get_training_status, today, default=None)
     balance_dto = first_value(dig(status, "mostRecentTrainingLoadBalance", "metricsTrainingLoadBalanceDTOMap")) or {}
@@ -780,6 +879,8 @@ def build_body_battery(client, today: str) -> Optional[dict]:
         "label": classify_body_battery(current),
         "high": fmt_int(max(values)) if values else None,
         "low": fmt_int(min(values)) if values else None,
+        "charged": fmt_int(entry.get("charged")),
+        "drained": fmt_int(entry.get("drained")),
     }
 
 
