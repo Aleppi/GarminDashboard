@@ -15,7 +15,7 @@ import os
 import re
 import statistics
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 from garmin_client import safe_call
@@ -210,12 +210,52 @@ def build_readiness_context(latest: dict) -> str:
     with_data = [f for f in factors if not f.get("no_data") and isinstance(f.get("pct"), (int, float))]
     if with_data:
         best = max(with_data, key=lambda f: f["pct"])
-        parts.append(f"driven by {best['label']} ({round(best['pct'])}%)")
+        parts.append(f"driven by {best['label']} ({best['short']})")
     missing = [f["label"] for f in factors if f.get("no_data")]
     if missing:
         parts.append("no " + ", ".join(missing) + " data today")
 
     return " · ".join(parts)
+
+
+def recovery_remaining_minutes(entry: Optional[dict]) -> Optional[float]:
+    """Garmin recovery time still left right now, in minutes. The readiness
+    entry's recoveryTime (MINUTES, not hours) is a snapshot as of that
+    entry's timestamp — often hours old by the time the dashboard loads —
+    so count it down by the time since, the way the watch does.
+    REACHED_ZERO means fully recovered even if Garmin left a stale nonzero
+    minutes value behind. None when Garmin gave no recovery time at all."""
+    if not entry:
+        return None
+    if entry.get("recoveryTimeChangePhrase") == "REACHED_ZERO":
+        return 0.0
+    minutes = entry.get("recoveryTime")
+    if not isinstance(minutes, (int, float)):
+        return None
+    elapsed = 0.0
+    stamp = entry.get("timestamp")  # GMT; timestampLocal would depend on the server's timezone
+    if isinstance(stamp, str):
+        try:
+            taken = datetime.fromisoformat(stamp[:19]).replace(tzinfo=timezone.utc)
+            elapsed = max(0.0, (datetime.now(timezone.utc) - taken).total_seconds() / 60)
+        except ValueError:
+            pass
+    return max(0.0, minutes - elapsed)
+
+
+def fmt_recovery_time(minutes: Optional[float]) -> str:
+    """'1d 20h', '7h', '<1h', or 'Recovered'."""
+    if minutes is None:
+        return "—"
+    if minutes <= 0:
+        return "Recovered"
+    hours = round(minutes / 60)
+    if hours < 1:
+        return "<1h"
+    if hours < 24:
+        return f"{hours}h"
+    days, rest = divmod(hours, 24)
+    return f"{days}d {rest}h" if rest else f"{days}d"
 
 
 def build_vitals_factors(readiness_entry: Optional[dict]) -> list[dict]:
@@ -228,14 +268,26 @@ def build_vitals_factors(readiness_entry: Optional[dict]) -> list[dict]:
         prefix = key[: -len("FactorPercent")]
         feedback = to_title(readiness_entry.get(f"{prefix}FactorFeedback"))
         has_data = isinstance(value, (int, float))
+        # The bar stays Garmin's 0-100 factor score (how much this factor is
+        # helping readiness), like every other row — but for recovery time
+        # "33%" means nothing to a person, so the text shows the actual
+        # time left instead.
+        short = f"{round(value)}%" if has_data else None
+        if prefix == "recoveryTime" and has_data:
+            remaining = recovery_remaining_minutes(readiness_entry)
+            if remaining is not None:
+                short = fmt_recovery_time(remaining)
+                if remaining <= 0:
+                    feedback = None  # "Recovered · Poor" would read as a contradiction
         factors.append(
             {
                 "label": humanize_key(key),
                 "pct": value if has_data else None,
                 "status": "good" if (has_data and value >= 70) else "mod",
                 "no_data": not has_data,
-                "display": f"{round(value)}% · {feedback}" if (has_data and feedback) else (
-                    f"{round(value)}%" if has_data else "No data"
+                "short": short,
+                "display": f"{short} · {feedback}" if (has_data and feedback) else (
+                    short if has_data else "No data"
                 ),
             }
         )
@@ -1133,13 +1185,9 @@ def build_next_waypoint(training_load: dict, readiness_entries: list[dict], acti
     concrete session suggestions ('4x4 intervals on the bike/run') instead of
     just restating raw numbers, plus a running set of coaching-style notes."""
     latest = sorted(readiness_entries, key=lambda e: e.get("timestampLocal") or "")[-1] if readiness_entries else {}
-    # Garmin reports recoveryTime in MINUTES, not hours — treating it as
-    # hours directly (the old bug here) turned e.g. a real ~19h recovery
-    # into a nonsensical "1164h". REACHED_ZERO means fully recovered even
-    # if Garmin left a stale nonzero minutes value behind.
-    recovery_minutes = latest.get("recoveryTime")
-    if latest.get("recoveryTimeChangePhrase") == "REACHED_ZERO":
-        recovery_minutes = 0
+    # Time left as of now, not as of the (often hours-old) readiness entry
+    # — see recovery_remaining_minutes.
+    recovery_minutes = recovery_remaining_minutes(latest)
     recovery_hours = (recovery_minutes / 60) if recovery_minutes else None
     acwr = training_load.get("acwr")
     balance = {row["label"]: row for row in training_load.get("balance", [])}
@@ -1216,7 +1264,7 @@ def build_next_waypoint(training_load: dict, readiness_entries: list[dict], acti
 
     if recovery_hours:
         cleared = datetime.now() + timedelta(hours=recovery_hours)
-        notes.append(f"Garmin recovery time: {round(recovery_hours)}h — clears around {cleared.strftime('%a %H:%M')}")
+        notes.append(f"Garmin recovery time: {fmt_recovery_time(recovery_minutes)} left — clears around {cleared.strftime('%a %H:%M')}")
 
     status_phrase = training_load.get("status_phrase")
     if status_phrase:
