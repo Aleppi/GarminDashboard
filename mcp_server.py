@@ -250,8 +250,13 @@ def mark_race_day(
             yet, use your best estimate and set date_approx=True.
         name: Event name.
         kind: "race" (default) or "goal" — a dated target that isn't an
-            event, e.g. "Base block done". Goals show on the Races tab but
-            get no race flag on the chart.
+            event, e.g. "VO2 max 60" or "Base block done" (put the target
+            itself in `goal`, e.g. goal="VO2 max 60"). Goals show on the
+            dashboard's tab but get no race flag on the chart; the tab is
+            labelled "Goals" while someone has only goals, "Races" once
+            they have a race. A goal still needs a date — if the athlete
+            gave no deadline, ask, or use a sensible estimate with
+            date_approx=True.
         status: "confirmed" (default) or "tentative" — not entered/decided yet.
         date_approx: True when race_date is an estimate.
         sport: e.g. "trail running", "triathlon", "cycling".

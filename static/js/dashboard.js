@@ -1505,6 +1505,9 @@
     racesAvailable = upcoming.length > 0;
     $('viewTabs').hidden = !racesAvailable;
     setText('racesTabCount', racesAvailable ? String(upcoming.length) : '');
+    // Named for what's in it: "Goals" while only goals are set (e.g. a VO2
+    // max target), "Races" as soon as there's an actual race to count down to.
+    setText('racesTabLabel', upcoming.some((r) => r.kind !== 'goal') ? 'Races' : 'Goals');
     if (!racesAvailable) {
       featuredRace = null;
       if (currentView === 'races') setView('dashboard');

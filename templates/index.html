@@ -35,7 +35,7 @@
        page stays a single view for anyone without a race planned. -->
   <nav class="view-tabs" id="viewTabs" role="tablist" aria-label="Dashboard sections" hidden>
     <button type="button" class="view-tab" role="tab" id="tabDashboard" data-view="dashboard" aria-controls="viewDashboard" aria-selected="true">Dashboard</button>
-    <button type="button" class="view-tab" role="tab" id="tabRaces" data-view="races" aria-controls="viewRaces" aria-selected="false" tabindex="-1">Races <span class="view-tab-count" id="racesTabCount"></span></button>
+    <button type="button" class="view-tab" role="tab" id="tabRaces" data-view="races" aria-controls="viewRaces" aria-selected="false" tabindex="-1"><span id="racesTabLabel">Races</span> <span class="view-tab-count" id="racesTabCount"></span></button>
   </nav>
 
   <div class="view" id="viewDashboard" role="tabpanel" aria-labelledby="tabDashboard">
@@ -243,7 +243,7 @@
       <ul class="race-past" id="racePast"></ul>
     </section>
 
-    <p class="race-howto">Races are added from a chat with Claude through the TrainState connector — e.g. “I’m racing the Basel half on 12 April, goal sub-1:40”.</p>
+    <p class="race-howto">Races and goals are added from a chat with Claude through the TrainState connector — e.g. “I’m racing the Basel half on 12 April, goal sub-1:40” or “I want a VO2 max of 60 by June”.</p>
   </div><!-- /viewRaces -->
 
   <footer>
