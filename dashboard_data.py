@@ -1548,6 +1548,16 @@ _DATE_PINNED_PATTERNS = (
 )
 
 
+def _is_optional(entry: dict) -> bool:
+    """A session the plan itself marks as optional ("... (optional)", "Rest
+    or 30 min easy spin"). Not doing one isn't a miss: once its day passes
+    it shows as skipped on its own date and is never slid onto a later day.
+    "rest or" only counts at the start — inside interval text ("90s rest or
+    jog") it describes the recoveries, not the session."""
+    t = (entry.get("session") or "").strip().lower()
+    return "optional" in t or t.startswith("rest or")
+
+
 def _is_date_pinned(entry: dict, kind: str) -> bool:
     """True for a planned entry tied to its own calendar date — a travel
     day, a rest day, "no structured training" — as opposed to a session the
@@ -2546,6 +2556,19 @@ def build_training_plan(plan: Optional[dict], activities: list[dict], client=Non
                     "planned_session": entry.get("session", ""),
                     "activity_type": kind,
                     "status": "upcoming",
+                    "completed_activity": None,
+                }
+            )
+        elif _is_optional(entry) and session_date < today:
+            # Past, not done, and the plan said it was optional: skipped,
+            # on its own day — not a miss, and nothing still owed to slide.
+            sessions.append(
+                {
+                    "date": entry["date"],
+                    "weekday": session_date.strftime("%a"),
+                    "planned_session": entry.get("session", ""),
+                    "activity_type": kind,
+                    "status": "skipped",
                     "completed_activity": None,
                 }
             )

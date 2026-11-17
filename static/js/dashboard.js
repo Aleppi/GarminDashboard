@@ -1267,7 +1267,7 @@
       const card = document.createElement('div');
       card.className = 'rp-day ' + s.status;
 
-      const STATUS_LABELS = { completed: 'Done', missed: 'Missed', unplanned: 'Extra', rest: 'Done', upcoming: 'Upcoming' };
+      const STATUS_LABELS = { completed: 'Done', missed: 'Missed', skipped: 'Skipped', unplanned: 'Extra', rest: 'Done', upcoming: 'Upcoming' };
       const statusLabel = STATUS_LABELS[s.status] || 'Upcoming';
       const icon = ACTIVITY_ICONS[s.activity_type] || ACTIVITY_ICONS.other;
       const head = document.createElement('div');

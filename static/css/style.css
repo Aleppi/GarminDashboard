@@ -426,6 +426,7 @@
   /* A day-context entry (travel, rest, no structured training) whose date
      has passed — nothing was owed, so it reads neutral rather than red. */
   .rp-day.rest{border-left-color:var(--ink-faint);opacity:.7;}
+  .rp-day.skipped{border-left-color:var(--ink-faint);opacity:.6;}
   .rp-day-head{
     display:flex;justify-content:space-between;align-items:baseline;
     font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
@@ -438,6 +439,7 @@
   .rp-day.missed .rp-day-head{color:var(--rust-text);}
   .rp-day.unplanned .rp-day-head{color:var(--ink-dim);}
   .rp-day.rest .rp-day-head{color:var(--ink-faint);}
+  .rp-day.skipped .rp-day-head{color:var(--ink-faint);}
   .rp-day.unplanned .rp-day-status{color:var(--violet);opacity:.8;}
   .rp-day-status{font-size:10px;}
   .rp-day-body{font-size:13px;color:var(--ink);line-height:1.5;}
