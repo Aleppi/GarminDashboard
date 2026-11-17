@@ -2787,6 +2787,97 @@ def build_next_waypoint_from_training_plan(training_plan_payload: Optional[dict]
     }
 
 
+# ------------------------------------------------------- weekly summary --
+
+WEEKLY_SUMMARY_AVG_WEEKS = 4
+_SUMMARY_SPORTS = (("running", "Run"), ("cycling", "Bike"), ("swimming", "Swim"), ("strength", "Strength"), ("other", "Other"))
+
+
+def _week_totals(activities: list[dict]) -> dict:
+    totals = {"seconds": 0.0, "meters": 0.0, "load": 0.0, "sessions": 0,
+              "sports": {k: {"seconds": 0.0, "meters": 0.0, "sessions": 0} for k, _ in _SUMMARY_SPORTS}}
+    for a in activities:
+        secs = a.get("duration") or a.get("movingDuration") or 0
+        meters = a.get("distance") or 0
+        load = a.get("activityTrainingLoad") or 0
+        sport = totals["sports"][_activity_kind(a)]
+        for bucket in (totals, sport):
+            bucket["seconds"] += secs
+            bucket["meters"] += meters
+            bucket["sessions"] += 1
+        totals["load"] += load
+    return totals
+
+
+def build_weekly_summary(client, today: str, training_plan: Optional[dict] = None) -> Optional[dict]:
+    """This week (Monday to today) against the average of the previous
+    WEEKLY_SUMMARY_AVG_WEEKS full weeks: time, distance, Garmin training
+    load and session count, overall and per sport, plus how much of the
+    training plan that was due so far got done."""
+    today_d = date.fromisoformat(today)
+    week_start = today_d - timedelta(days=today_d.weekday())
+    first = week_start - timedelta(weeks=WEEKLY_SUMMARY_AVG_WEEKS)
+    activities = safe_call(client.get_activities_by_date, first.isoformat(), today, default=None)
+    if activities is None:
+        return None
+
+    by_week: dict[int, list[dict]] = {}
+    for a in activities:
+        try:
+            day = date.fromisoformat((a.get("startTimeLocal") or "")[:10])
+        except ValueError:
+            continue
+        weeks_back = (week_start - (day - timedelta(days=day.weekday()))).days // 7
+        if 0 <= weeks_back <= WEEKLY_SUMMARY_AVG_WEEKS:
+            by_week.setdefault(weeks_back, []).append(a)
+
+    this_week = _week_totals(by_week.get(0, []))
+    past = [_week_totals(by_week.get(w, [])) for w in range(1, WEEKLY_SUMMARY_AVG_WEEKS + 1)]
+    n = len(past)
+
+    def avg(key: str, sport: Optional[str] = None) -> float:
+        vals = [(p["sports"][sport] if sport else p)[key] for p in past]
+        return sum(vals) / n if n else 0.0
+
+    def figure(cur: float, average: float) -> dict:
+        return {"value": cur, "avg": round(average, 1),
+                "pct_of_avg": round(100 * cur / average) if average else None}
+
+    sports = []
+    for key, label in _SUMMARY_SPORTS:
+        cur = this_week["sports"][key]
+        if not cur["sessions"] and not avg("sessions", key):
+            continue  # a sport neither done this week nor in the last month
+        sports.append({
+            "key": key, "label": label, "sessions": cur["sessions"],
+            "seconds": figure(round(cur["seconds"]), avg("seconds", key)),
+            "meters": figure(round(cur["meters"]), avg("meters", key)),
+        })
+
+    plan = None
+    if training_plan and training_plan.get("is_current_week") is not False:
+        statuses = [s.get("status") for s in training_plan.get("sessions") or []]
+        done, missed, skipped = statuses.count("completed"), statuses.count("missed"), statuses.count("skipped")
+        plan = {"done": done, "due": done + missed, "missed": missed, "skipped": skipped,
+                "remaining": statuses.count("upcoming"), "extra": statuses.count("unplanned")}
+
+    return {
+        "week_start": week_start.isoformat(),
+        "week_end": (week_start + timedelta(days=6)).isoformat(),
+        "days_in": today_d.weekday() + 1,
+        "avg_weeks": n,
+        "last_week": {"seconds": round(past[0]["seconds"]), "load": round(past[0]["load"])} if past else None,
+        "totals": {
+            "seconds": figure(round(this_week["seconds"]), avg("seconds")),
+            "meters": figure(round(this_week["meters"]), avg("meters")),
+            "load": figure(round(this_week["load"]), avg("load")),
+            "sessions": figure(this_week["sessions"], avg("sessions")),
+        },
+        "sports": sports,
+        "plan": plan,
+    }
+
+
 def get_dashboard_payload(client, username: Optional[str] = None) -> dict:
     errors: list[str] = []
     today = date.today().isoformat()
@@ -2820,6 +2911,8 @@ def get_dashboard_payload(client, username: Optional[str] = None) -> dict:
         stored_plan = race_plan_module.get_plan(username)
         training_plan_payload = build_training_plan(stored_plan, activities, client=client)
         next_waypoint = build_next_waypoint_from_training_plan(training_plan_payload, stored_plan)
+
+    weekly_summary = build_weekly_summary(client, today, training_plan_payload)
 
     if next_waypoint is None:
         # No race plan (or nothing left to point at in one) — fall back to
@@ -2857,4 +2950,5 @@ def get_dashboard_payload(client, username: Optional[str] = None) -> dict:
         "next_waypoint": next_waypoint,
         "route_log": route_log,
         "training_plan": training_plan_payload,
+        "weekly_summary": weekly_summary,
     }

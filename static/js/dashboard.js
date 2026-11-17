@@ -1312,6 +1312,66 @@
     }
   }
 
+  // ------------------------------------------------------- weekly summary --
+  function fmtDur(sec) {
+    const mins = Math.round((sec || 0) / 60);
+    if (mins < 60) return mins + 'm';
+    return Math.floor(mins / 60) + 'h ' + pad2(mins % 60) + 'm';
+  }
+  function fmtKm(m) { return ((m || 0) / 1000).toFixed(m >= 100000 ? 0 : 1) + ' km'; }
+
+  function renderWeeklySummary(w) {
+    const panel = $('weekPanel');
+    if (!w) { panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+    const range = fmtShortDate(w.week_start) + ' – ' + fmtShortDate(w.week_end);
+    setText('weekTag', range + ' · day ' + w.days_in + ' of 7 · vs your ' + w.avg_weeks + '-week average');
+
+    const t = w.totals;
+    const tile = (label, cur, fmt, cls) => {
+      const pct = cur.pct_of_avg;
+      return '<div class="stat-tile"><div class="v ' + (cls || '') + '">' + fmt(cur.value) + '</div>' +
+        '<div class="l">' + label + '</div>' +
+        '<div class="d">avg week ' + fmt(cur.avg) + (pct != null ? ' · ' + pct + '%' : '') + '</div></div>';
+    };
+    $('weekTotals').innerHTML =
+      tile('Time', t.seconds, fmtDur, 'gold') +
+      tile('Distance', t.meters, fmtKm) +
+      tile('Training load', t.load, (v) => String(Math.round(v))) +
+      tile('Sessions', t.sessions, (v) => (Math.round(v * 10) / 10).toString());
+
+    // One row per sport: bar = this week's time, tick = an average week.
+    $('weekSports').innerHTML = (w.sports || []).map((sp) => {
+      const cur = sp.seconds.value, avg = sp.seconds.avg;
+      const max = Math.max(cur, avg, 1) * 1.08;
+      const icon = ACTIVITY_ICONS[sp.key] || ACTIVITY_ICONS.other;
+      const dist = sp.meters.value > 0 ? ' · ' + fmtKm(sp.meters.value) : '';
+      return '<div class="week-sport">' +
+        '<span class="week-sport-name">' + icon + escapeHtml(sp.label) + '</span>' +
+        '<span class="week-track" title="Average week: ' + fmtDur(avg) + '">' +
+          '<span class="week-fill ' + sp.key + '" style="width:' + (100 * cur / max).toFixed(1) + '%"></span>' +
+          (avg > 0 ? '<span class="week-avg" style="left:' + (100 * avg / max).toFixed(1) + '%"></span>' : '') +
+        '</span>' +
+        '<span class="week-sport-val"><b>' + (cur > 0 ? fmtDur(cur) : '—') + '</b>' + dist +
+          '<span class="week-sport-avg">avg ' + fmtDur(avg) + '</span></span>' +
+      '</div>';
+    }).join('') + '<div class="week-legend"><span><i class="week-legend-bar"></i>this week</span><span><i class="week-legend-avg"></i>average week</span></div>';
+
+    const plan = w.plan;
+    const planEl = $('weekPlan');
+    if (plan && (plan.due || plan.remaining || plan.skipped)) {
+      const bits = [plan.due ? '<b>' + plan.done + ' of ' + plan.due + '</b> sessions due so far done' : 'Nothing due yet'];
+      if (plan.missed) bits.push(plan.missed + ' missed');
+      if (plan.skipped) bits.push(plan.skipped + ' skipped');
+      if (plan.remaining) bits.push(plan.remaining + ' still to come');
+      if (plan.extra) bits.push(plan.extra + ' extra');
+      planEl.innerHTML = '<span class="week-plan-label">Plan</span>' + bits.join(' · ');
+      planEl.style.display = 'block';
+    } else {
+      planEl.style.display = 'none';
+    }
+  }
+
   // ------------------------------------------------------------ race plan --
   function fmtRaceCountdown(days) {
     if (days === null || days === undefined) return '';
@@ -1986,6 +2046,7 @@
     renderVitals(data.vitals);
     renderLastWaypoint(data.last_activity);
     renderNextWaypoint(data.next_waypoint, data.coach_note);
+    renderWeeklySummary(data.weekly_summary);
     renderRacePlan(data.training_plan);
     updateLastUpdatedLabel(data);
   }
