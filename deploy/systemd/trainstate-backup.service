@@ -1,0 +1,8 @@
+[Unit]
+Description=TrainState data backup (local archive + TRAINBACKUP USB stick if present)
+
+[Service]
+Type=oneshot
+# Root only so it can mount the USB stick; files it writes go back to aleppi.
+ExecStart=/usr/bin/python3 /home/aleppi/GarminDashboard/scripts/backup_data.py
+Nice=10

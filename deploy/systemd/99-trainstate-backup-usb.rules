@@ -1,0 +1,2 @@
+# Plugging in a USB stick labelled TRAINBACKUP runs a backup right away.
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="TRAINBACKUP", TAG+="systemd", ENV{SYSTEMD_WANTS}+="trainstate-backup.service"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly TrainState data backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+# Catch up after a power cut / reboot that skipped 03:30.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
