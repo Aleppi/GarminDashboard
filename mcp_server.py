@@ -325,24 +325,38 @@ def list_garmin_courses() -> dict:
 
 
 @mcp.tool()
-def attach_race_course(race_date: str, garmin_course_id: int) -> dict:
-    """Attach one of the athlete's saved Garmin Connect courses to a race
-    already on their calendar (mark_race_day first), so the Races tab shows
-    its elevation profile and splits. Find the course id with
-    list_garmin_courses.
-    (A GPX file from the race website can be uploaded on the Races tab
-    itself.) Returns the course summary: distance, climb, sections."""
+def attach_race_course(race_date: str, garmin_course_id: Optional[int] = None, gpx_url: str = "") -> dict:
+    """Attach a course to a race already on the athlete's calendar
+    (mark_race_day it first), so the Races tab shows its elevation profile
+    and pacing/fuel splits. Give ONE of:
+
+    - garmin_course_id: one of the athlete's saved Garmin Connect courses
+      (see list_garmin_courses).
+    - gpx_url: a direct link to a .gpx file, e.g. the official course file
+      on the race website. GPX waypoints (aid stations) become checkpoints.
+      Must be the file itself, not a web page about the course.
+
+    If neither exists, tell the athlete they can upload a GPX file on the
+    Races tab (Course → Upload GPX). Returns the course summary: distance,
+    climb, checkpoints, sections."""
     username = _current_username()
     if race_date not in {r["date"] for r in race_days.get_race_days(username)}:
         return {"error": f"no race on {race_date} — mark_race_day it first"}
+    if bool(garmin_course_id) == bool(gpx_url.strip()):
+        return {"error": "give exactly one of garmin_course_id or gpx_url"}
     try:
-        client = garmin_client.get_client(username)
-        detail = client.connectapi(f"/course-service/course/{int(garmin_course_id)}")
-        course = race_courses.from_garmin_course(detail)
+        if gpx_url.strip():
+            course = race_courses.fetch_gpx_url(gpx_url.strip())
+        else:
+            client = garmin_client.get_client(username)
+            detail = client.connectapi(f"/course-service/course/{int(garmin_course_id)}")
+            course = race_courses.from_garmin_course(detail)
     except (GarminAuthRequired, GarminUnavailable) as exc:
         return {"error": str(exc)}
-    except Exception as exc:  # noqa: BLE001 — bad id, odd course shape
-        return {"error": f"couldn't load that Garmin course: {exc}"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 — network errors, bad id, odd course shape
+        return {"error": f"couldn't load that course: {exc}"}
     race_courses.save_course(username, race_date, course)
     _invalidate_dashboard_cache(username)
     return {"saved": True, "course": race_courses.summary(course)}
@@ -402,6 +416,36 @@ def list_activities(start_date: str, end_date: str) -> dict:
 # See garmin_tools_bridge for how per-request identity is kept isolated,
 # and GARMIN_TOOLS_MODE in .env to widen or disable the set.
 _garmin_tools = register_garmin_tools(mcp, _current_username)
+
+# Which tools a chat sees and calls — the request log alone only shows
+# "POST /mcp", which can't answer "why didn't Claude use X?".
+_tool_log = logging.getLogger("trainstate.mcp.tools")
+_tool_log.setLevel(logging.INFO)
+if not _tool_log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+    _tool_log.addHandler(_h)
+    _tool_log.propagate = False
+_orig_call_tool, _orig_list_tools = mcp.call_tool, mcp.list_tools
+
+
+async def _logged_call_tool(name, arguments, context=None):
+    try:
+        who = _current_username()
+    except Exception:  # noqa: BLE001
+        who = "?"
+    _tool_log.info("tool call: %s by %s", name, who)
+    return await _orig_call_tool(name, arguments, context)
+
+
+async def _logged_list_tools():
+    tools = await _orig_list_tools()
+    _tool_log.info("tools/list: %d tools served", len(tools))
+    return tools
+
+
+mcp.call_tool = _logged_call_tool
+mcp.list_tools = _logged_list_tools
 
 
 # ---------------------------------------------------------- login page --

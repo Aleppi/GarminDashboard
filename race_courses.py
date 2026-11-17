@@ -250,6 +250,9 @@ def _local(tag: str) -> str:
 
 
 def parse_gpx(data: bytes, filename: str = "") -> dict:
+    head = data[:512].lstrip().lower()
+    if head.startswith(b"<!doctype html") or head.startswith(b"<html"):
+        raise ValueError("that's a web page, not a GPX file — use the link to the .gpx download itself")
     try:
         root = ET.fromstring(data)
     except ET.ParseError as exc:
@@ -277,6 +280,49 @@ def parse_gpx(data: bytes, filename: str = "") -> dict:
     name = next((c.text for el in root.iter() if _local(el.tag) in ("trk", "metadata", "rte")
                  for c in el if _local(c.tag) == "name" and c.text), None)
     return build_course(track, waypoints, name=name or Path(filename).stem, source="gpx")
+
+
+MAX_GPX_BYTES = 20 * 1024 * 1024
+
+
+def fetch_gpx_url(url: str) -> dict:
+    """Download a GPX from a public URL (e.g. a race website's course file)
+    and build the course. Runs on the Pi inside the home network, so it
+    refuses anything that isn't plain http(s) to a public address — the
+    URL comes from a chat, and must not be able to reach the router or
+    other machines on the LAN — and caps size and time."""
+    import ipaddress
+    import socket
+    from urllib.parse import urljoin, urlparse
+
+    import requests
+
+    for _ in range(4):  # the URL plus up to 3 redirects, each one checked
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("the GPX link must be an http(s) URL")
+        try:
+            infos = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        except socket.gaierror:
+            raise ValueError(f"can't resolve {parsed.hostname}") from None
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0])
+            if not ip.is_global:
+                raise ValueError("that link points at a private network address")
+        resp = requests.get(url, timeout=20, stream=True, allow_redirects=False,
+                            headers={"User-Agent": "TrainState-course-import"})
+        if resp.is_redirect:
+            url = urljoin(url, resp.headers.get("Location", ""))
+            continue
+        if resp.status_code != 200:
+            raise ValueError(f"the link returned HTTP {resp.status_code}")
+        data = b""
+        for chunk in resp.iter_content(65536):
+            data += chunk
+            if len(data) > MAX_GPX_BYTES:
+                raise ValueError("the GPX file is over 20 MB")
+        return parse_gpx(data, Path(urlparse(url).path).name)
+    raise ValueError("too many redirects")
 
 
 def from_garmin_course(detail: dict) -> dict:
