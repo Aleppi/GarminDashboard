@@ -801,3 +801,37 @@
   @media (max-width:860px){
     .week-sport{grid-template-columns:78px 1fr 112px;gap:9px;}
   }
+
+  /* ---------- Race courses ---------- */
+  .race-course{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
+  .race-course.empty{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+  .rc-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin-bottom:4px;}
+  .rc-label{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);}
+  .rc-stats{font-family:var(--font-mono);font-size:12px;color:var(--ink);}
+  .rc-name{font-size:11.5px;color:var(--ink-faint);margin-bottom:4px;}
+  .rc-remove{margin-left:auto;background:none;border:none;color:var(--ink-faint);font-size:11px;cursor:pointer;text-decoration:underline;padding:0;}
+  .rc-remove:hover{color:var(--rust-text);}
+  .rc-btn{
+    font-family:var(--font-mono);font-size:11.5px;background:var(--gold-soft);border:1px solid var(--gold);color:var(--gold);
+    padding:4px 10px;border-radius:3px;cursor:pointer;line-height:1.4;
+  }
+  .rc-btn:hover{background:var(--gold);color:var(--bg);}
+  .rc-select{
+    max-width:100%;font-family:var(--font-mono);font-size:11.5px;background:var(--panel-2);color:var(--ink);
+    border:1px solid var(--line);border-radius:3px;padding:4px 6px;
+  }
+  .rc-status{font-size:11.5px;color:var(--ink-faint);}
+  .rc-status.bad{color:var(--rust-text);}
+  .rc-profile{margin:4px 0 6px;}
+  .vc-vline{stroke:var(--gold);stroke-width:1;stroke-dasharray:2 3;opacity:.8;}
+  .vc-vline-label{font-family:var(--font-mono);font-size:9px;fill:var(--gold);}
+  .rc-splits summary{cursor:pointer;font-family:var(--font-mono);font-size:11.5px;color:var(--teal-text);padding:4px 0;}
+  .rc-target{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0;font-size:12.5px;color:var(--ink-dim);}
+  .rc-target input{
+    width:96px;margin-left:6px;font-family:var(--font-mono);font-size:13px;background:var(--panel-2);color:var(--ink);
+    border:1px solid var(--line);border-radius:3px;padding:4px 7px;
+  }
+  .rc-target input:focus{outline:none;border-color:var(--gold);}
+  .rc-table td, .rc-table th{white-space:nowrap;}
+  .rc-at{display:block;font-size:10.5px;color:var(--ink-faint);font-family:var(--font-mono);}
+  .rc-note{font-size:11.5px;color:var(--ink-faint);margin:8px 0 0;line-height:1.5;}

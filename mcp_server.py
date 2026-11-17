@@ -38,6 +38,7 @@ import garmin_client
 import garmin_login
 import oauth_store
 import race_days
+import race_courses
 import race_plan
 from dashboard_data import MAX_ACTIVITY_RANGE_DAYS, build_activity_calendar, coach_note_is_stale, get_dashboard_payload
 from garmin_client import GarminAuthRequired, GarminUnavailable
@@ -225,6 +226,7 @@ def mark_race_day(
     start_time: str = "",
     notes: str = "",
     url: str = "",
+    target_time: str = "",
 ) -> dict:
     """Add or update a race (or dated goal) for this athlete. It gets a flag
     on the fitness (CTL/ATL) chart and, while it's still ahead, a card with a
@@ -268,11 +270,15 @@ def mark_race_day(
         notes: Anything else worth seeing on the card (cut-offs, kit, why
             this race matters in the season).
         url: Official race page.
+        target_time: Finish time to pace the course sections against, as
+            "h:mm:ss" or "mm:ss" — used by the Races tab's splits when the
+            race has a course. Separate from `goal`, which can be words
+            ("Finish & enjoy").
     """
     username = _current_username()
     details = {k: v for k, v in {
         "sport": sport, "location": location, "distance": distance, "elevation": elevation,
-        "goal": goal, "start_time": start_time, "notes": notes, "url": url,
+        "goal": goal, "start_time": start_time, "notes": notes, "url": url, "target_time": target_time,
     }.items() if v}
     details = {k: ("" if v.strip() == "" else v.strip()) for k, v in details.items()}
     try:
@@ -292,8 +298,54 @@ def get_races() -> dict:
     tab: everything upcoming (with days_to_go, status, details, and whether
     the stored training plan targets it) plus the most recent past races.
     Check this before planning so advice accounts for every race on the
-    calendar, not just the one a training plan was pushed for."""
-    return race_days.races_overview(_current_username(), date.today().isoformat())
+    calendar, not just the one a training plan was pushed for. Races with a
+    course attached include it: distance, climb, checkpoints and sections
+    (each with its climb and ITRA effort-km) — use those for pacing and
+    fuelling advice."""
+    return race_days.races_overview(_current_username(), date.today().isoformat(), include_profile=False)
+
+
+@mcp.tool()
+def list_garmin_courses() -> dict:
+    """The athlete's saved Garmin Connect courses (id, name, km, climb,
+    sport) — to pick one for attach_race_course."""
+    username = _current_username()
+    try:
+        client = garmin_client.get_client(username)
+        data = client.connectapi("/web-gateway/course/owner/") or {}
+    except (GarminAuthRequired, GarminUnavailable) as exc:
+        return {"error": str(exc)}
+    return {"courses": [
+        {"id": c.get("courseId"), "name": c.get("courseName"),
+         "km": round((c.get("distanceInMeters") or 0) / 1000, 1),
+         "climb_m": round(c.get("elevationGainInMeters") or 0),
+         "sport": (c.get("activityType") or {}).get("typeKey")}
+        for c in data.get("coursesForUser") or [] if c.get("courseId")
+    ]}
+
+
+@mcp.tool()
+def attach_race_course(race_date: str, garmin_course_id: int) -> dict:
+    """Attach one of the athlete's saved Garmin Connect courses to a race
+    already on their calendar (mark_race_day first), so the Races tab shows
+    its elevation profile and splits. Find the course id with
+    list_garmin_courses.
+    (A GPX file from the race website can be uploaded on the Races tab
+    itself.) Returns the course summary: distance, climb, sections."""
+    username = _current_username()
+    if race_date not in {r["date"] for r in race_days.get_race_days(username)}:
+        return {"error": f"no race on {race_date} — mark_race_day it first"}
+    try:
+        client = garmin_client.get_client(username)
+        detail = client.connectapi(f"/course-service/course/{int(garmin_course_id)}")
+        course = race_courses.from_garmin_course(detail)
+    except (GarminAuthRequired, GarminUnavailable) as exc:
+        return {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 — bad id, odd course shape
+        return {"error": f"couldn't load that Garmin course: {exc}"}
+    race_courses.save_course(username, race_date, course)
+    _invalidate_dashboard_cache(username)
+    return {"saved": True, "course": race_courses.summary(course)}
 
 
 @mcp.tool()
@@ -302,6 +354,7 @@ def unmark_race_day(race_date: str) -> dict:
     got cancelled/rescheduled. Args: race_date: "YYYY-MM-DD"."""
     username = _current_username()
     race_days.unmark_race_day(username, race_date)
+    race_courses.delete_course(username, race_date)
     _invalidate_dashboard_cache(username)
     return {"saved": True}
 

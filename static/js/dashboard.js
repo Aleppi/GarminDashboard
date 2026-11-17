@@ -1100,6 +1100,11 @@
       if (x < padL - 1 || x > W - padR + 1) return;
       svg += '<text class="mc-axis" x="' + x + '" y="' + (H - 6) + '" text-anchor="middle">' + escapeHtml(t.label) + '</text>';
     });
+    (cfg.vLines || []).forEach((v, k) => {
+      const x = xAt(v.x);
+      svg += '<line class="vc-vline" x1="' + x + '" x2="' + x + '" y1="' + padT + '" y2="' + (H - padB) + '"/>' +
+        '<text class="vc-vline-label" x="' + (x + 3) + '" y="' + (padT + 9 + (k % 2) * 11) + '">' + escapeHtml(v.label) + '</text>';
+    });
     (cfg.refLines || []).forEach((r) => {
       svg += '<line class="vc-ref" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yAt(r.y) + '" y2="' + yAt(r.y) + '"/>' +
         '<text class="vc-ref-label" x="' + (W - padR - 2) + '" y="' + (yAt(r.y) - 4) + '" text-anchor="end">' + escapeHtml(r.label) + '</text>';
@@ -1852,6 +1857,7 @@
         '<div class="race-when">' + raceWhere(r) + '</div>' +
         raceFacts(r) +
         raceExtras(r) +
+        renderCourseBlock(r) +
       '</div>' +
       '<div class="race-countdown" aria-live="off">' +
         '<div class="race-countdown-figure">' + (days === 0 ? 'Today' : (r.date_approx ? '~' : '') + days) + '</div>' +
@@ -1935,10 +1941,20 @@
       '<div class="race-when">' + raceWhere(r) + '</div>' +
       raceFacts(r) +
       raceExtras(r) +
+      renderCourseBlock(r) +
     '</article>';
   }
 
+  let lastRacesSig = null;
+
   function renderRaces(data) {
+    // The 60s poll would otherwise rebuild the tab every minute — wiping a
+    // target time mid-typing, an open file picker or splits table.
+    const sig = JSON.stringify(data);
+    if (sig === lastRacesSig) return;
+    const active = document.activeElement;
+    if (lastRacesSig && active && $('viewRaces').contains(active) && /^(INPUT|SELECT)$/.test(active.tagName)) return;
+    lastRacesSig = sig;
     lastRaces = data;
     const upcoming = (data && data.upcoming) || [];
     const past = (data && data.past) || [];
@@ -1972,6 +1988,7 @@
       '<span class="race-past-name">' + escapeHtml(r.name || 'Race') + '</span>' +
       '<span class="race-past-ago">' + fmtAgoDays(-daysUntil(r.date)) + '</span></li>').join('');
 
+    hydrateCourses();
     tickRaceClock();
   }
 
@@ -2008,10 +2025,211 @@
     if (raceClockTimer) { clearInterval(raceClockTimer); raceClockTimer = null; }
   }
 
+  // ------------------------------------------------------- race courses --
+  // A race can carry a course (GPX upload or a saved Garmin course): an
+  // elevation profile plus sections, with the target time spread across
+  // sections by ITRA effort-km (km + 1 per 100 m climbed).
+  const FUEL_CARBS_G_PER_H = 60, FUEL_FLUID_ML_PER_H = 500, FUEL_MIN_MINUTES = 75;
+
+  function raceByDate(d) {
+    return ((lastRaces && lastRaces.upcoming) || []).find((r) => r.date === d) || null;
+  }
+
+  // "4:30:00", "53:00", "Sub 4:30", "0:53:00" -> seconds. Two-part times are
+  // ambiguous (h:mm or mm:ss); pick the reading that gives a believable
+  // pace for this course.
+  function parseTargetSeconds(text, course) {
+    const m = /(\d{1,3})(?::(\d{2}))(?::(\d{2}))?/.exec(text || '');
+    if (!m) return null;
+    if (m[3] !== undefined) return (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);
+    const hm = (+m[1]) * 3600 + (+m[2]) * 60, ms = (+m[1]) * 60 + (+m[2]);
+    const ekm = (course && course.effort_km) || 0;
+    if (!ekm) return ms >= 600 ? ms : hm;
+    const plausible = (secs) => secs / ekm >= 150 && secs / ekm <= 1200; // 2:30–20:00 per effort-km
+    if (plausible(ms) && !plausible(hm)) return ms;
+    if (plausible(hm) && !plausible(ms)) return hm;
+    return ms / ekm >= 150 ? ms : hm;
+  }
+
+  function fmtHms(sec) {
+    sec = Math.round(sec);
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s2 = sec % 60;
+    return h ? h + ':' + pad2(m) + ':' + pad2(s2) : m + ':' + pad2(s2);
+  }
+
+  function renderCourseBlock(r) {
+    const c = r.course;
+    if (!c) {
+      return '<div class="race-course empty" data-date="' + escapeHtml(r.date) + '">' +
+        '<span class="rc-label">Course</span>' +
+        '<label class="rc-btn">Upload GPX<input type="file" accept=".gpx,application/gpx+xml" data-gpx hidden></label>' +
+        '<button type="button" class="rc-btn" data-garmin-pick>Use a Garmin course</button>' +
+        '<select class="rc-select" data-garmin-select hidden></select>' +
+        '<span class="rc-status" data-status></span></div>';
+    }
+    const stats = [(c.distance_m / 1000).toFixed(1) + ' km', '↑' + c.gain_m.toLocaleString('en-GB') + ' m',
+      '↓' + c.loss_m.toLocaleString('en-GB') + ' m', c.max_ele != null ? 'high point ' + Math.round(c.max_ele).toLocaleString('en-GB') + ' m' : null]
+      .filter(Boolean).join(' · ');
+    const targetText = r.target_time || '';
+    const fromGoal = !targetText && parseTargetSeconds(r.goal || r.plan_goal, c);
+    return '<div class="race-course" data-date="' + escapeHtml(r.date) + '">' +
+      '<div class="rc-head"><span class="rc-label">Course</span><span class="rc-stats">' + escapeHtml(stats) + '</span>' +
+        '<button type="button" class="rc-remove" data-course-remove title="Remove this course">Remove</button></div>' +
+      (c.name ? '<div class="rc-name">' + escapeHtml(c.name) + '</div>' : '') +
+      '<div class="vc-plot rc-profile" data-profile></div>' +
+      '<details class="rc-splits"><summary>Splits &amp; fuel</summary>' +
+        '<div class="rc-target"><label>Target time <input type="text" inputmode="numeric" placeholder="h:mm:ss" data-target value="' +
+          escapeHtml(targetText || (fromGoal ? fmtHms(fromGoal) : '')) + '"></label>' +
+          '<button type="button" class="rc-btn" data-target-save>Save</button><span class="rc-status" data-status></span></div>' +
+        '<div class="log-scroll"><table class="log rc-table"><thead><tr><th>To</th><th>Section</th><th>↑ / ↓</th><th>Time</th><th>Pace</th><th>Arrive</th><th data-fuel-col>Fuel</th></tr></thead>' +
+        '<tbody data-splits></tbody></table></div>' +
+        '<p class="rc-note" data-note></p>' +
+      '</details></div>';
+  }
+
+  function hydrateCourses() {
+    document.querySelectorAll('#viewRaces .race-course[data-date]').forEach((el) => {
+      const r = raceByDate(el.dataset.date);
+      if (!r || !r.course) return;
+      drawCourseProfile(el.querySelector('[data-profile]'), r.course);
+      fillSplits(el, r);
+    });
+  }
+
+  function drawCourseProfile(plot, c) {
+    if (!plot || !c.profile || c.profile.length < 2) {
+      if (plot) plot.innerHTML = '<div class="mc-empty">This course has no elevation data.</div>';
+      return;
+    }
+    const km = c.distance_m / 1000;
+    const step = [1, 2, 5, 10, 20, 25, 50].find((s) => km / s <= 8) || 50;
+    const ticks = [];
+    for (let k = 0; k <= km + 1e-9; k += step) ticks.push({ x: k * 1000, label: k + ' km' });
+    const lo = Math.floor((c.min_ele - 20) / 50) * 50, hi = Math.ceil((c.max_ele + 20) / 50) * 50;
+    drawVitalChart(plot, {
+      height: plot.closest('.race-card') ? 120 : 150,
+      xDomain: [0, c.distance_m], yDomain: [lo, hi], yTicks: [lo, hi], yFmt: (v) => v + 'm',
+      xTicks: ticks,
+      vLines: (c.checkpoints || []).map((cp) => ({ x: cp.dist, label: cp.name })),
+      series: [{ cls: 'teal', area: true, points: c.profile.map((p) => ({ x: p[0], y: p[1] })) }],
+      tip: (i) => '<b>' + Math.round(c.profile[i][1]).toLocaleString('en-GB') + ' m</b><span class="mc-tip-date">km ' + (c.profile[i][0] / 1000).toFixed(1) + '</span>',
+    });
+  }
+
+  function fillSplits(el, r, override) {
+    const c = r.course;
+    const tbody = el.querySelector('[data-splits]');
+    if (!tbody) return;
+    const input = el.querySelector('[data-target]');
+    const text = override !== undefined ? override : (input ? input.value : r.target_time);
+    const total = parseTargetSeconds(text, c);
+    const fuel = total && total / 60 >= FUEL_MIN_MINUTES;
+    el.querySelectorAll('[data-fuel-col]').forEach((th) => { th.hidden = !fuel; });
+    let start = null;
+    const m = /^(\d{1,2}):(\d{2})/.exec(r.start_time || '');
+    if (m && !r.date_approx) { start = parseLocalDate(r.date); start.setHours(+m[1], +m[2], 0, 0); }
+    let cum = 0;
+    tbody.innerHTML = c.sections.map((sec) => {
+      const km = (sec.to_m - sec.from_m) / 1000;
+      const t = total ? total * sec.effort_km / c.effort_km : null;
+      if (t) cum += t;
+      const arrive = t && start ? new Date(start.getTime() + cum * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : (t ? fmtHms(cum) : '—');
+      const fuelCell = fuel ? '<td data-label="Fuel">' + Math.round(FUEL_CARBS_G_PER_H * t / 3600 / 5) * 5 + ' g · ' +
+        Math.round(FUEL_FLUID_ML_PER_H * t / 3600 / 50) * 50 + ' ml</td>' : '';
+      return '<tr><td data-label="To"><b>' + escapeHtml(sec.to) + '</b><span class="rc-at">km ' + (sec.to_m / 1000).toFixed(1) + '</span></td>' +
+        '<td data-label="Section">' + km.toFixed(1) + ' km</td>' +
+        '<td data-label="↑ / ↓">↑' + sec.gain + ' ↓' + sec.loss + '</td>' +
+        '<td data-label="Time">' + (t ? fmtHms(t) : '—') + '</td>' +
+        '<td data-label="Pace">' + (t ? fmtHms(t / km) + '/km' : '—') + '</td>' +
+        '<td data-label="Arrive">' + arrive + '</td>' + fuelCell + '</tr>';
+    }).join('');
+    const note = el.querySelector('[data-note]');
+    note.textContent = !total
+      ? 'Enter a target time to split it across the sections.'
+      : 'Time is spread by effort: each km counts once, plus 1 km per 100 m climbed (ITRA). ' +
+        (start ? 'Arrive = clock time from the ' + r.start_time + ' start. ' : 'Arrive = elapsed time. ') +
+        (fuel ? 'Fuel at ' + FUEL_CARBS_G_PER_H + ' g carbs + ' + FUEL_FLUID_ML_PER_H + ' ml per hour — adjust to what you’ve practised.' : '');
+  }
+
+  function bindCourseControls() {
+    const view = $('viewRaces');
+    const status = (el, msg, bad) => {
+      const s2 = el.querySelector('[data-status]');
+      if (s2) { s2.textContent = msg; s2.classList.toggle('bad', !!bad); }
+    };
+    const attach = (el, body) => {
+      status(el, 'Loading course…');
+      return fetch('/api/races/' + encodeURIComponent(el.dataset.date) + '/course', body)
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { status(el, j.error || 'Couldn’t attach that course.', true); return; }
+          lastRacesSig = null;
+          return loadRaces();
+        })
+        .catch((err) => status(el, 'Upload failed: ' + err, true));
+    };
+    view.addEventListener('change', (e) => {
+      const el = e.target.closest('.race-course');
+      if (!el) return;
+      if (e.target.matches('[data-gpx]') && e.target.files[0]) {
+        const fd = new FormData();
+        fd.append('gpx', e.target.files[0]);
+        attach(el, { method: 'POST', body: fd });
+      } else if (e.target.matches('[data-garmin-select]') && e.target.value) {
+        attach(el, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ garmin_course_id: +e.target.value }) });
+      }
+    });
+    view.addEventListener('input', (e) => {
+      if (!e.target.matches('[data-target]')) return;
+      const el = e.target.closest('.race-course');
+      const r = raceByDate(el.dataset.date);
+      if (r && r.course) fillSplits(el, r, e.target.value);
+    });
+    view.addEventListener('click', (e) => {
+      const el = e.target.closest('.race-course');
+      if (!el) return;
+      if (e.target.closest('[data-garmin-pick]')) {
+        const sel = el.querySelector('[data-garmin-select]');
+        status(el, 'Loading your Garmin courses…');
+        fetch('/api/garmin-courses').then((r) => r.json()).then((j) => {
+          if (j.error || !(j.courses || []).length) { status(el, j.error || 'No saved courses in Garmin Connect.', !!j.error); return; }
+          sel.innerHTML = '<option value="">Pick a course…</option>' + j.courses.map((c) =>
+            '<option value="' + c.id + '">' + escapeHtml(c.name) + ' — ' + c.km + ' km, ↑' + c.gain + ' m</option>').join('');
+          sel.hidden = false;
+          e.target.closest('[data-garmin-pick]').hidden = true;
+          status(el, '');
+          sel.focus();
+        }).catch((err) => status(el, 'Couldn’t reach Garmin: ' + err, true));
+      } else if (e.target.closest('[data-course-remove]')) {
+        if (!confirm('Remove this course from the race?')) return;
+        fetch('/api/races/' + encodeURIComponent(el.dataset.date) + '/course', { method: 'DELETE' })
+          .then(() => { lastRacesSig = null; return loadRaces(); });
+      } else if (e.target.closest('[data-target-save]')) {
+        const value = el.querySelector('[data-target]').value.trim();
+        fetch('/api/races/' + encodeURIComponent(el.dataset.date) + '/target', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_time: value }),
+        }).then((r) => r.json()).then((j) => {
+          if (j.error) { status(el, j.error, true); return; }
+          status(el, 'Saved');
+          el.querySelector('[data-target]').blur();
+          lastRacesSig = null;
+          setTimeout(loadRaces, 600);
+        });
+      }
+    });
+  }
+
   let raceResizeTimer = null;
   window.addEventListener('resize', () => {
     clearTimeout(raceResizeTimer);
-    raceResizeTimer = setTimeout(() => { if (lastRaces) renderRaceTimeline(lastRaces.upcoming || []); }, 150);
+    raceResizeTimer = setTimeout(() => {
+      if (!lastRaces) return;
+      renderRaceTimeline(lastRaces.upcoming || []);
+      document.querySelectorAll('#viewRaces .race-course[data-date]').forEach((el) => {
+        const r = raceByDate(el.dataset.date);
+        if (r && r.course) drawCourseProfile(el.querySelector('[data-profile]'), r.course);
+      });
+    }, 150);
   });
 
   function loadRaces() {
@@ -2027,6 +2245,7 @@
   }
 
   function bindRacePlanLinks() {
+    bindCourseControls();
     $('viewRaces').addEventListener('click', (e) => {
       if (!e.target.closest('[data-goto-plan]')) return;
       setView('dashboard');

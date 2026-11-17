@@ -28,7 +28,7 @@ STATUSES = ("confirmed", "tentative")
 # Optional free-text details, in display order. Kept as text on purpose:
 # "~30 km", "106 km", "1,500 m D+", "08:30" all read better verbatim than
 # forced into numbers, and they come from a chat, not a form.
-DETAIL_FIELDS = ("sport", "location", "distance", "elevation", "goal", "start_time", "notes", "url")
+DETAIL_FIELDS = ("sport", "location", "distance", "elevation", "goal", "start_time", "notes", "url", "target_time")
 
 _COLUMNS: dict[str, str] = {
     "kind": "TEXT NOT NULL DEFAULT 'race'",
@@ -137,11 +137,12 @@ def race_dates(username: str) -> set[str]:
 PAST_RACES_SHOWN = 6
 
 
-def races_overview(username: str, today: str) -> dict:
+def races_overview(username: str, today: str, include_profile: bool = True) -> dict:
     """What the Races tab shows: everything still ahead (races and goals,
     soonest first, each with days to go) plus the most recent past races.
     A race that the stored training plan targets is tagged with that plan's
     goal time, so the tab can say a plan is driving toward it."""
+    import race_courses
     import race_plan  # local import: race_plan doesn't need this module back
 
     from datetime import date
@@ -155,6 +156,8 @@ def races_overview(username: str, today: str) -> dict:
         if entry["has_plan"] and plan.get("goal_time"):
             entry["plan_goal"] = plan["goal_time"]
         if entry["days_to_go"] >= 0:
+            course = race_courses.get_course(username, entry["date"])
+            entry["course"] = course if include_profile else race_courses.summary(course)
             upcoming.append(entry)
         elif entry["kind"] == "race":
             past.append(entry)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import os
 import threading
 import time
@@ -15,6 +16,7 @@ import auth
 import coach_notes
 import garmin_client
 import garmin_login
+import race_courses
 import race_days
 import reviews
 import users
@@ -31,7 +33,7 @@ from dashboard_data import (
     coach_note_is_stale,
     get_dashboard_payload,
 )
-from garmin_client import GarminAuthRequired, GarminUnavailable
+from garmin_client import GarminAuthRequired, GarminUnavailable, safe_call
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -437,6 +439,100 @@ def api_races():
     # Plain DB read (no Garmin call), so no caching — the Races tab reflects
     # a race marked from chat the moment the page polls again.
     return jsonify(race_days.races_overview(auth.current_username(), date.today().isoformat()))
+
+
+MAX_GPX_BYTES = 20 * 1024 * 1024
+
+
+def _own_race_or_404(username: str, race_date: str):
+    if race_date not in {r["date"] for r in race_days.get_race_days(username)}:
+        return jsonify({"error": "no race on that date"}), 404
+    return None
+
+
+@app.route("/api/garmin-courses")
+@auth.login_required
+def api_garmin_courses():
+    """The user's saved Garmin Connect courses, to pick one for a race."""
+    username = auth.current_username()
+    cache_key = ("garmin-courses", username)
+    with _cache_lock:
+        cached = _range_caches.get(cache_key)
+        if cached and (time.time() - cached["fetched_at"]) < 600:
+            return jsonify(cached["payload"])
+    try:
+        client = garmin_client.get_client(username)
+    except (GarminAuthRequired, GarminUnavailable) as exc:
+        return jsonify({"error": str(exc)}), 200
+    data = safe_call(client.connectapi, "/web-gateway/course/owner/", default=None) or {}
+    courses = [
+        {"id": c.get("courseId"), "name": c.get("courseName") or "Untitled course",
+         "km": round((c.get("distanceInMeters") or 0) / 1000, 1), "gain": round(c.get("elevationGainInMeters") or 0),
+         "type": (c.get("activityType") or {}).get("typeKey")}
+        for c in data.get("coursesForUser") or [] if c.get("courseId")
+    ]
+    payload = {"courses": courses}
+    with _cache_lock:
+        _range_caches[cache_key] = {"payload": payload, "fetched_at": time.time()}
+    return jsonify(payload)
+
+
+@app.route("/api/races/<race_date>/course", methods=["POST"])
+@auth.login_required
+def api_race_course_set(race_date: str):
+    """Attach a course: a GPX upload (multipart field "gpx") or a saved
+    Garmin course (JSON {"garmin_course_id": ...})."""
+    username = auth.current_username()
+    missing = _own_race_or_404(username, race_date)
+    if missing:
+        return missing
+    try:
+        upload = request.files.get("gpx")
+        if upload is not None:
+            if request.content_length and request.content_length > MAX_GPX_BYTES:
+                return jsonify({"error": "GPX file is over 20 MB"}), 413
+            course = race_courses.parse_gpx(upload.read(MAX_GPX_BYTES + 1)[:MAX_GPX_BYTES], upload.filename or "")
+        else:
+            body = request.get_json(silent=True) or {}
+            course_id = int(body.get("garmin_course_id"))
+            client = garmin_client.get_client(username)
+            detail = client.connectapi(f"/course-service/course/{course_id}")
+            course = race_courses.from_garmin_course(detail)
+    except (GarminAuthRequired, GarminUnavailable) as exc:
+        return jsonify({"error": str(exc)}), 200
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc) or "couldn't read that course"}), 400
+    except Exception as exc:  # noqa: BLE001 — Garmin errors for a bad/foreign course id
+        logging.getLogger(__name__).warning("course attach failed: %s", exc)
+        return jsonify({"error": "couldn't load that course from Garmin"}), 400
+    race_courses.save_course(username, race_date, course)
+    return jsonify({"saved": True, "course": race_courses.summary(course)})
+
+
+@app.route("/api/races/<race_date>/course", methods=["DELETE"])
+@auth.login_required
+def api_race_course_delete(race_date: str):
+    username = auth.current_username()
+    missing = _own_race_or_404(username, race_date)
+    if missing:
+        return missing
+    race_courses.delete_course(username, race_date)
+    return jsonify({"deleted": True})
+
+
+@app.route("/api/races/<race_date>/target", methods=["POST"])
+@auth.login_required
+def api_race_target(race_date: str):
+    username = auth.current_username()
+    missing = _own_race_or_404(username, race_date)
+    if missing:
+        return missing
+    body = request.get_json(silent=True) or {}
+    target = str(body.get("target_time") or "").strip()
+    if target and not re.fullmatch(r"\d{1,3}(:\d{2}){1,2}", target):
+        return jsonify({"error": "target time must look like 4:30:00 or 53:00"}), 400
+    race_days.mark_race_day(username, race_date, target_time=target)
+    return jsonify({"saved": True, "target_time": target or None})
 
 
 @app.route("/api/review/<activity_id>", methods=["GET"])
