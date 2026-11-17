@@ -358,6 +358,17 @@
   .vc-swatch{display:inline-block;width:16px;height:0;border-top:2px solid;}
   .vc-swatch.gold{border-color:var(--gold);} .vc-swatch.teal{border-color:var(--teal);} .vc-swatch.faint{border-color:var(--ink-faint);}
   .vc-swatch.dashed{border-top-style:dashed;}
+  .vc-swatch.block{width:10px;height:10px;border:none;border-radius:2px;}
+  .vc-swatch.block.teal{background:var(--teal);} .vc-swatch.block.gold{background:var(--gold);} .vc-swatch.block.rust{background:var(--rust);}
+  .vc-swatch.dot{width:6px;height:6px;border:none;border-radius:50%;background:var(--ink-faint);}
+  .vc-swatch.band{width:14px;height:10px;border:none;border-radius:2px;background:var(--teal-soft);outline:1px solid var(--teal);outline-offset:-1px;}
+  .vc-band.teal{fill:var(--teal-soft);stroke:none;}
+  .vc-bar.teal{fill:var(--teal);} .vc-bar.gold{fill:var(--gold);} .vc-bar.rust{fill:var(--rust);} .vc-bar.faint{fill:var(--ink-faint);}
+  .vc-dot.faint{fill:var(--ink-faint);}
+  .vc-focus.faint{fill:var(--ink-dim);} .vc-focus.rust{fill:var(--rust);}
+  .sleep-trend{margin-top:16px;padding-top:12px;border-top:1px solid var(--line);}
+  /* Odd number of boxes: the last one fills its row instead of leaving a hole. */
+  .mini-stats > .ms-box:last-child:nth-child(odd){grid-column:1 / -1;}
   .sleep-bar{display:flex;height:10px;border-radius:2px;overflow:hidden;background:var(--line);gap:1px;}
   .sleep-bar span{display:block;height:100%;}
   .sleep-stage-rows{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin-top:10px;}
@@ -391,20 +402,6 @@
   .wp-alt{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-faint);}
 
   .review-label{display:block;font-size:12.5px;color:var(--ink-dim);margin:2px 0 6px;}
-  .review-box{
-    width:100%;min-height:120px;background:var(--panel-2);border:1px solid var(--line);border-radius:3px;
-    color:var(--ink);font-family:var(--font-body);font-size:13.5px;padding:10px 12px;resize:vertical;
-    line-height:1.5;
-  }
-  .review-box:focus{outline:none;border-color:var(--teal);}
-  .review-box::placeholder{color:var(--ink-faint);}
-  .review-actions{display:flex;align-items:center;gap:10px;margin-top:10px;}
-  #saveReviewBtn{
-    font-family:var(--font-mono);font-size:12px;background:var(--teal-soft);border:1px solid var(--teal);
-    color:var(--teal-text);padding:6px 14px;border-radius:3px;cursor:pointer;transition:background .15s,color .15s;
-  }
-  #saveReviewBtn:hover{background:var(--teal);color:#12181A;}
-  #reviewStatus{font-size:11.5px;color:var(--ink-faint);}
 
   /* Race Plan */
   .race-plan{margin-top:22px;}

@@ -817,7 +817,7 @@
       const opening = !box.classList.contains('open');
       boxes.forEach((b) => setOpen(b, b === box && opening));
       openVital = opening ? box.dataset.vital : null;
-      if (opening && box.dataset.vital !== 'sleep') loadVitalChart(box.dataset.vital);
+      if (opening) loadVitalChart(box.dataset.vital);
     };
     boxes.forEach((box) => {
       box.addEventListener('click', (e) => {
@@ -833,7 +833,7 @@
     });
     let t = null;
     window.addEventListener('resize', () => {
-      if (!openVital || openVital === 'sleep') return;
+      if (!openVital) return;
       clearTimeout(t);
       t = setTimeout(() => {
         const cached = vitalHistory[openVital];
@@ -843,7 +843,7 @@
   }
 
   function vitalChartEl(metric) {
-    return $({ fitness_age: 'fitnessAgeChart', rhr: 'rhrChart', body_battery: 'batteryChart' }[metric]);
+    return $({ fitness_age: 'fitnessAgeChart', rhr: 'rhrChart', body_battery: 'batteryChart', hrv: 'hrvChart', sleep: 'sleepTrend' }[metric]);
   }
 
   function loadVitalChart(metric) {
@@ -877,6 +877,8 @@
     if (metric === 'body_battery') return renderBodyBatteryChart(el, data);
     if (metric === 'rhr') return renderRhrChart(el, data);
     if (metric === 'fitness_age') return renderFitnessAgeChart(el, data);
+    if (metric === 'hrv') return renderHrvChart(el, data);
+    if (metric === 'sleep') return renderSleepTrendChart(el, data);
   }
 
   function vitalHead(title, meta) {
@@ -984,6 +986,101 @@
     });
   }
 
+  function dateTicks(xs, everyDays) {
+    // A label every `everyDays` days, anchored on the LAST point (today) so
+    // the most recent tick is always a real, recent date.
+    const ticks = [];
+    for (let t = xs[xs.length - 1]; t >= xs[0]; t -= everyDays * 86400000) {
+      ticks.push({ x: t, label: new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) });
+    }
+    return ticks;
+  }
+
+  function renderHrvChart(el, data) {
+    const pts = (data.points || []).filter((p) => typeof p.night === 'number' || typeof p.week === 'number');
+    if (!pts.length) {
+      el.innerHTML = vitalHead('HRV', '') + '<div class="mc-empty">No overnight HRV from Garmin yet — it needs a few nights of wear.</div>';
+      return;
+    }
+    const last = pts[pts.length - 1];
+    const meta = [
+      typeof last.week === 'number' ? '7-day avg ' + last.week + ' ms' : null,
+      typeof last.low === 'number' ? 'baseline ' + last.low + '–' + last.high : null,
+      last.status,
+    ].filter(Boolean).join(' · ');
+    el.innerHTML = vitalHead(data.label || 'HRV', meta) +
+      '<div class="vc-legend">' +
+        '<span><i class="vc-swatch dot faint"></i>Nightly</span>' +
+        '<span><i class="vc-swatch gold"></i>7-day average</span>' +
+        '<span><i class="vc-swatch band"></i>Your balanced range</span>' +
+      '</div><div class="vc-plot"></div>';
+    const xs = pts.map((p) => parseLocalDate(p.date).getTime());
+    const all = [];
+    pts.forEach((p) => ['night', 'week', 'low', 'high'].forEach((k) => { if (typeof p[k] === 'number') all.push(p[k]); }));
+    const yLo = Math.floor((Math.min.apply(null, all) - 4) / 5) * 5, yHi = Math.ceil((Math.max.apply(null, all) + 4) / 5) * 5;
+    const narrow = (el.clientWidth || 600) < 420;
+    drawVitalChart(el.querySelector('.vc-plot'), {
+      height: 180,
+      xDomain: [xs[0] - 43200000, xs[xs.length - 1] + 43200000], yDomain: [yLo, yHi], yTicks: [yLo, yHi],
+      xTicks: dateTicks(xs, narrow ? 21 : 14),
+      band: { cls: 'teal', points: pts.map((p, i) => ({ x: xs[i], lo: p.low, hi: p.high })) },
+      series: [
+        { cls: 'faint', noLine: true, dots: true, dotR: 2.4, points: pts.map((p, i) => ({ x: xs[i], y: typeof p.night === 'number' ? p.night : null })) },
+        { cls: 'gold', points: pts.map((p, i) => ({ x: xs[i], y: typeof p.week === 'number' ? p.week : null })), lastDot: true },
+      ],
+      tipSeries: 0,
+      tip: (i) => {
+        const p = pts[i];
+        return '<b>' + (p.night != null ? p.night : '—') + '</b> ms overnight' +
+          '<span class="mc-tip-date">7-day avg ' + (p.week != null ? p.week : '—') +
+          (p.low != null ? ' · range ' + p.low + '–' + p.high : '') + '</span>' +
+          '<span class="mc-tip-date">' + fmtShortDate(p.date) + (p.status ? ' · ' + escapeHtml(p.status) : '') + '</span>';
+      },
+    });
+  }
+
+  function fmtHours(h) {
+    const mins = Math.round(h * 60);
+    return Math.floor(mins / 60) + 'h ' + pad2(mins % 60) + 'm';
+  }
+
+  function renderSleepTrendChart(el, data) {
+    const pts = data.points || [];
+    if (!pts.length) {
+      el.innerHTML = '<div class="mc-empty">No sleep recorded in the last 4 weeks.</div>';
+      return;
+    }
+    const meta = [
+      data.avg_hours != null ? 'avg ' + fmtHours(data.avg_hours) : null,
+      data.avg_score != null ? 'score ' + Math.round(data.avg_score) : null,
+      data.need_hours != null ? 'need ' + fmtHours(data.need_hours) : null,
+    ].filter(Boolean).join(' · ');
+    el.innerHTML = vitalHead(data.label || 'Sleep — last 4 weeks', meta) +
+      '<div class="vc-legend">' +
+        '<span><i class="vc-swatch block teal"></i>Score 80+</span>' +
+        '<span><i class="vc-swatch block gold"></i>60–79</span>' +
+        '<span><i class="vc-swatch block rust"></i>Under 60</span>' +
+      '</div><div class="vc-plot"></div>';
+    const xs = pts.map((p) => parseLocalDate(p.date).getTime());
+    const hi = Math.max(9, Math.ceil(Math.max.apply(null, pts.map((p) => p.hours)) + 0.5));
+    const band = (sc) => (typeof sc !== 'number' ? 'faint' : sc >= 80 ? 'teal' : sc >= 60 ? 'gold' : 'rust');
+    const narrow = (el.clientWidth || 600) < 420;
+    drawVitalChart(el.querySelector('.vc-plot'), {
+      height: 170,
+      xDomain: [xs[0] - 43200000, xs[xs.length - 1] + 43200000], yDomain: [0, hi], yTicks: [0, 4, 8].filter((v) => v <= hi),
+      yFmt: (v) => v + 'h',
+      xTicks: dateTicks(xs, narrow ? 14 : 7),
+      refLines: data.need_hours != null ? [{ y: data.need_hours, label: 'need ' + fmtHours(data.need_hours) }] : [],
+      series: [{ bars: true, cls: 'teal', points: pts.map((p, i) => ({ x: xs[i], y: p.hours, cls: band(p.score) })) }],
+      tip: (i) => {
+        const p = pts[i];
+        return '<b>' + fmtHours(p.hours) + '</b>' + (p.score != null ? ' · score ' + p.score : '') +
+          '<span class="mc-tip-date">' + parseLocalDate(p.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) +
+          (p.need_hours != null ? ' · need ' + fmtHours(p.need_hours) : '') + '</span>';
+      },
+    });
+  }
+
   // Minimal shared line chart for the vitals boxes: 1:1 pixel viewBox (same
   // reasoning as the ridge/metric charts — text and strokes never stretch),
   // null y breaks the line, hover/tap shows the nearest point.
@@ -996,7 +1093,7 @@
     let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" class="vc-svg">';
     (cfg.yTicks || []).forEach((v) => {
       svg += '<line class="mc-gridline" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yAt(v) + '" y2="' + yAt(v) + '"/>' +
-        '<text class="mc-axis" x="' + (padL - 5) + '" y="' + (yAt(v) + 3) + '" text-anchor="end">' + v + '</text>';
+        '<text class="mc-axis" x="' + (padL - 5) + '" y="' + (yAt(v) + 3) + '" text-anchor="end">' + (cfg.yFmt ? cfg.yFmt(v) : v) + '</text>';
     });
     (cfg.xTicks || []).forEach((t) => {
       const x = xAt(t.x);
@@ -1007,7 +1104,31 @@
       svg += '<line class="vc-ref" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yAt(r.y) + '" y2="' + yAt(r.y) + '"/>' +
         '<text class="vc-ref-label" x="' + (W - padR - 2) + '" y="' + (yAt(r.y) - 4) + '" text-anchor="end">' + escapeHtml(r.label) + '</text>';
     });
+    if (cfg.band) {
+      // Shaded lo–hi range (e.g. HRV baseline), broken wherever either edge is missing.
+      let run = [];
+      const flush = () => {
+        if (run.length > 1) {
+          svg += '<path class="vc-band ' + cfg.band.cls + '" d="M' + run.map((p) => xAt(p.x).toFixed(1) + ',' + yAt(p.hi).toFixed(1)).join(' L') +
+            ' L' + run.slice().reverse().map((p) => xAt(p.x).toFixed(1) + ',' + yAt(p.lo).toFixed(1)).join(' L') + ' Z"/>';
+        }
+        run = [];
+      };
+      cfg.band.points.forEach((p) => { if (typeof p.lo === 'number' && typeof p.hi === 'number') run.push(p); else flush(); });
+      flush();
+    }
     cfg.series.forEach((s) => {
+      if (s.bars) {
+        const n = s.points.length || 1;
+        const bw = Math.max(3, Math.min(16, ((W - padL - padR) / n) * 0.62));
+        s.points.forEach((p) => {
+          if (p.y == null) return;
+          const top = yAt(p.y), base = yAt(y0);
+          svg += '<rect class="vc-bar ' + (p.cls || s.cls) + '" x="' + (xAt(p.x) - bw / 2).toFixed(1) + '" y="' + top.toFixed(1) +
+            '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, base - top).toFixed(1) + '" rx="1.5"/>';
+        });
+        return;
+      }
       let d = '', pen = false, areaD = '', segStart = null, prevX = null;
       const closeArea = () => {
         if (s.area && segStart !== null) areaD += ' L' + prevX.toFixed(1) + ',' + yAt(y0) + ' L' + segStart.toFixed(1) + ',' + yAt(y0) + ' Z';
@@ -1023,8 +1144,8 @@
       });
       closeArea();
       if (s.area && areaD) svg += '<path class="vc-area ' + s.cls + '" d="' + areaD + '"/>';
-      svg += '<path class="vc-line ' + s.cls + (s.dashed ? ' dashed' : '') + '" d="' + d + '"/>';
-      if (s.dots) s.points.forEach((p) => { if (p.y != null) svg += '<circle class="vc-dot ' + s.cls + '" cx="' + xAt(p.x) + '" cy="' + yAt(p.y) + '" r="3"/>'; });
+      if (!s.noLine) svg += '<path class="vc-line ' + s.cls + (s.dashed ? ' dashed' : '') + '" d="' + d + '"/>';
+      if (s.dots) s.points.forEach((p) => { if (p.y != null) svg += '<circle class="vc-dot ' + s.cls + '" cx="' + xAt(p.x) + '" cy="' + yAt(p.y) + '" r="' + (s.dotR || 3) + '"/>'; });
       if (s.lastDot) {
         const lp = s.points.filter((p) => p.y != null).pop();
         if (lp) svg += '<circle class="mc-dot-last" cx="' + xAt(lp.x) + '" cy="' + yAt(lp.y) + '" r="4"/>';
@@ -1049,7 +1170,7 @@
       idx.forEach((i) => { const dist = Math.abs(xAt(ser.points[i].x) - mx); if (dist < bestDist) { bestDist = dist; best = i; } });
       const px = xAt(ser.points[best].x), py = yAt(ser.points[best].y);
       guide.setAttribute('x1', px); guide.setAttribute('x2', px); guide.setAttribute('visibility', 'visible');
-      focus.setAttribute('cx', px); focus.setAttribute('cy', py); focus.setAttribute('class', 'vc-focus ' + ser.cls); focus.setAttribute('visibility', 'visible');
+      focus.setAttribute('cx', px); focus.setAttribute('cy', py); focus.setAttribute('class', 'vc-focus ' + (ser.points[best].cls || ser.cls)); focus.setAttribute('visibility', ser.bars ? 'hidden' : 'visible');
       tip.innerHTML = cfg.tip(best);
       tip.style.display = 'block';
       let left = px * scale + 12;
@@ -1075,6 +1196,10 @@
     setText('rhrVal', rhr ? (fmtOrDash(rhr.fresh) + ' bpm') : '—');
     setText('rhrDetail', rhr ? ('7d avg ' + fmtOrDash(rhr.week_avg)) : 'No data');
 
+    const hrv = vitals.hrv;
+    setText('hrvVal', hrv && hrv.last_night != null ? hrv.last_night + ' ms' : '—');
+    setText('hrvDetail', hrv ? [hrv.week_avg != null ? '7d avg ' + hrv.week_avg : null, hrv.status].filter(Boolean).join(' · ') : 'No data');
+
     const sleep = vitals.last_sleep;
     setText('sleepVal', sleep ? sleep.duration + (sleep.score ? (' · ' + sleep.score) : '') : '—');
     setText('sleepDetail', sleep ? ('night of ' + sleep.date + (sleep.quality ? (' · ' + sleep.quality) : '')) : 'No recent night logged');
@@ -1094,20 +1219,13 @@
   }
 
   // ------------------------------------------------------------- waypoints --
-  let currentActivityId = null;
-
   function renderLastWaypoint(activity) {
     if (!activity) {
       setText('lastActivityTitle', 'No recent activity');
       setText('lastActivityWindow', '');
       setText('lastActivityBody', 'Garmin has no activities in range.');
-      currentActivityId = null;
-      $('activityReview').value = '';
-      $('activityReview').disabled = true;
       return;
     }
-    currentActivityId = activity.activity_id;
-    $('activityReview').disabled = false;
     setText('lastActivityTitle', activity.name + (activity.distance !== '—' ? (' — ' + activity.distance) : ''));
     setText('lastActivityWindow', [activity.date, activity.duration, activity.avg_hr !== '—' ? ('avg HR ' + activity.avg_hr) : null]
       .filter(Boolean).join(' · '));
@@ -1115,35 +1233,6 @@
       ? activity.zone_breakdown.join(', ') + '.'
       : (activity.description || 'No further detail from Garmin for this activity.');
     setText('lastActivityBody', body);
-
-    loadReview(currentActivityId);
-  }
-
-  function loadReview(activityId) {
-    if (!activityId) return;
-    fetch('/api/review/' + encodeURIComponent(activityId))
-      .then((r) => r.json())
-      .then((data) => { $('activityReview').value = data.note || ''; })
-      .catch(() => {});
-  }
-
-  function saveReview() {
-    if (!currentActivityId) return;
-    const btn = $('saveReviewBtn');
-    const status = $('reviewStatus');
-    btn.disabled = true;
-    fetch('/api/review/' + encodeURIComponent(currentActivityId), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note: $('activityReview').value }),
-    })
-      .then((r) => r.json())
-      .then((data) => { status.textContent = data.saved ? 'Saved' : 'Save failed — try again'; })
-      .catch(() => { status.textContent = 'Save failed — try again'; })
-      .finally(() => {
-        btn.disabled = false;
-        setTimeout(() => { status.textContent = ''; }, 2500);
-      });
   }
 
   function fillList(id, items, emptyText) {
@@ -1951,7 +2040,6 @@
     loadRaces();
 
     $('refreshBtn').addEventListener('click', function () { loadDashboard(true); loadRaces(); });
-    $('saveReviewBtn').addEventListener('click', saveReview);
     loadDashboard(false);
 
     $('calPrevBtn').addEventListener('click', function () {

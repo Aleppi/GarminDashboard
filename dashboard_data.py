@@ -676,7 +676,9 @@ def build_metric_history(client, metric: str, today: str) -> dict:
 # Behind the expandable Vitals boxes; served through the same
 # /api/metric-history endpoint (and cache) as the VO2/endurance tiles.
 
-VITALS_HISTORY_METRICS = {"body_battery", "rhr", "fitness_age"}
+VITALS_HISTORY_METRICS = {"body_battery", "rhr", "fitness_age", "hrv", "sleep"}
+HRV_HISTORY_DAYS = int(os.getenv("DASHBOARD_HRV_HISTORY_DAYS", "56"))
+SLEEP_HISTORY_DAYS = 28  # Garmin rejects sleep-stat ranges over 28 days
 FITNESS_AGE_HISTORY_DAYS = int(os.getenv("DASHBOARD_FITNESS_AGE_HISTORY_DAYS", "182"))
 FITNESS_AGE_CHUNK_DAYS = 27  # Garmin rejects fitness-age stat ranges of 29+ days
 
@@ -733,6 +735,58 @@ def build_vitals_history(client, metric: str, today: str) -> dict:
             "unit": "bpm",
             "points": points,
             "avg": round(sum(values) / len(values), 1) if values else None,
+        }
+
+    if metric == "hrv":
+        start = (today_d - timedelta(days=HRV_HISTORY_DAYS - 1)).isoformat()
+        data = safe_call(client.connectapi, f"/hrv-service/hrv/daily/{start}/{today}", default=None) or {}
+        points = []
+        for row in data.get("hrvSummaries") or []:
+            base = row.get("baseline") or {}
+            day = row.get("calendarDate")
+            if not day:
+                continue
+            points.append({
+                "date": day,
+                "night": row.get("lastNightAvg"),
+                "week": row.get("weeklyAvg"),
+                # Garmin's "balanced" band for this person on that date —
+                # its own baseline, recomputed as the weeks go by.
+                "low": base.get("balancedLow"),
+                "high": base.get("balancedUpper"),
+                "status": to_title(row.get("status")) if (row.get("status") or "NONE") != "NONE" else None,
+            })
+        points.sort(key=lambda p: p["date"])
+        return {"metric": metric, "label": f"HRV — last {HRV_HISTORY_DAYS // 7} weeks", "unit": "ms", "points": points}
+
+    if metric == "sleep":
+        start = (today_d - timedelta(days=SLEEP_HISTORY_DAYS - 1)).isoformat()
+        data = safe_call(client.connectapi, f"/sleep-service/stats/sleep/daily/{start}/{today}", default=None) or {}
+        points = []
+        for row in data.get("individualStats") or []:
+            vals, day = row.get("values") or {}, row.get("calendarDate")
+            secs = vals.get("totalSleepTimeInSeconds")
+            if not day or not isinstance(secs, (int, float)) or secs <= 0:
+                continue
+            need = vals.get("sleepNeed")
+            points.append({
+                "date": day,
+                "hours": round(secs / 3600, 2),
+                "score": vals.get("sleepScore"),
+                "quality": to_title(vals.get("sleepScoreQuality")),
+                "need_hours": round(need / 60, 2) if isinstance(need, (int, float)) else None,
+            })
+        points.sort(key=lambda p: p["date"])
+        overall = data.get("overallStats") or {}
+        avg_need = overall.get("averageSleepNeed")
+        avg_secs = overall.get("averageSleepSeconds")
+        return {
+            "metric": metric,
+            "label": "Sleep — last 4 weeks",
+            "points": points,
+            "avg_hours": round(avg_secs / 3600, 2) if isinstance(avg_secs, (int, float)) else None,
+            "avg_score": overall.get("averageSleepScore"),
+            "need_hours": round(avg_need / 60, 2) if isinstance(avg_need, (int, float)) else None,
         }
 
     if metric == "fitness_age":
@@ -969,6 +1023,18 @@ def build_fitness_age(client, today: str) -> Optional[dict]:
     }
 
 
+def build_hrv(client, today: str) -> Optional[dict]:
+    data = safe_call(client.get_hrv_data, today, default=None) or {}
+    summary = data.get("hrvSummary") or {}
+    if summary.get("lastNightAvg") is None and summary.get("weeklyAvg") is None:
+        return None
+    return {
+        "last_night": summary.get("lastNightAvg"),
+        "week_avg": summary.get("weeklyAvg"),
+        "status": to_title(summary.get("status")),
+    }
+
+
 def build_recovery(latest: Optional[dict]) -> Optional[dict]:
     """Recovery-time box: when recovery clears as an absolute UTC instant,
     so the page can count down live between (cached) dashboard polls
@@ -995,6 +1061,7 @@ def build_vitals(client, today: str, readiness_entries: list[dict]) -> dict:
     last_sleep = build_last_sleep(client)
     resting_hr = build_resting_hr(client, today)
     fitness_age = build_fitness_age(client, today)
+    hrv = build_hrv(client, today)
 
     missing = [f["label"] for f in factors if f.get("no_data")]
     gap_callout = None
@@ -1013,6 +1080,7 @@ def build_vitals(client, today: str, readiness_entries: list[dict]) -> dict:
         "last_sleep": last_sleep,
         "resting_hr": resting_hr,
         "fitness_age": fitness_age,
+        "hrv": hrv,
         "gap_callout": gap_callout,
     }
 

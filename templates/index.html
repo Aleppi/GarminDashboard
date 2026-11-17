@@ -159,9 +159,16 @@
           <div class="v" id="rhrVal">—</div><div class="l">Resting HR<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="rhrDetail"></div>
           <div class="ms-detail" id="rhrChart" hidden></div>
         </div>
-        <div class="mini-stat ms-box" id="sleepBox" data-vital="sleep" role="button" tabindex="0" aria-expanded="false" aria-controls="sleepStages">
+        <div class="mini-stat ms-box" id="sleepBox" data-vital="sleep" role="button" tabindex="0" aria-expanded="false" aria-controls="sleepPanel">
           <div class="v" id="sleepVal">—</div><div class="l">Last Sleep<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="sleepDetail"></div>
-          <div class="ms-detail sleep-stages" id="sleepStages" hidden></div>
+          <div class="ms-detail" id="sleepPanel" hidden>
+            <div class="sleep-stages" id="sleepStages"></div>
+            <div class="sleep-trend" id="sleepTrend"></div>
+          </div>
+        </div>
+        <div class="mini-stat ms-box" id="hrvBox" data-vital="hrv" role="button" tabindex="0" aria-expanded="false" aria-controls="hrvChart">
+          <div class="v" id="hrvVal">—</div><div class="l">HRV<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="hrvDetail"></div>
+          <div class="ms-detail" id="hrvChart" hidden></div>
         </div>
         <div class="mini-stat ms-box" id="batteryBox" data-vital="body_battery" role="button" tabindex="0" aria-expanded="false" aria-controls="batteryChart">
           <div class="v" id="batteryVal">—</div><div class="l">Body Battery<span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="batteryDetail"></div>
@@ -180,12 +187,6 @@
       <div class="wp-title" id="lastActivityTitle">—</div>
       <div class="wp-window" id="lastActivityWindow"></div>
       <div class="wp-body" id="lastActivityBody"></div>
-      <label class="review-label" for="activityReview">How did it feel?</label>
-      <textarea id="activityReview" class="review-box" rows="5" placeholder="e.g. clean throughout, no tightness / slight pull around km 3 / felt normal but stiff on cooldown..."></textarea>
-      <div class="review-actions">
-        <button id="saveReviewBtn" type="button">Save note</button>
-        <span id="reviewStatus"></span>
-      </div>
     </section>
 
     <section class="panel next-waypoint">
