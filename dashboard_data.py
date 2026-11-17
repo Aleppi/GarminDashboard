@@ -1575,7 +1575,10 @@ def _classify_plan_text(text: str) -> str:
     t = (text or "").lower()
     if any(k in t for k in ("interval", "sprint", "stride", "vo2", " rep", "×", "hill rep")):
         return "interval"
-    if any(k in t for k in ("tempo", "threshold")):
+    # A test (FTP/ramp/time trial) is a hard effort even when the text also
+    # mentions an easy warm-up/cool-down ("FTP ramp test, then easy spin"):
+    # without this it read as "easy" and lost its own ride to an easy slot.
+    if any(k in t for k in ("tempo", "threshold", "ftp", "ramp test", "time trial", "test")):
         return "tempo"
     if "long" in t:
         return "long"
@@ -2158,6 +2161,7 @@ def _greedy_match_by_closeness(
     act_metrics: dict[str, dict[str, Optional[float]]],
     plan_types: Optional[dict[int, str]] = None,
     interval_like_dates: frozenset = frozenset(),
+    act_types: Optional[dict[str, str]] = None,
 ) -> dict[int, str]:
     """Pair plan entries to activity dates by how close the activity's real
     distance/pace/duration is to the session's OWN stated target — the most
@@ -2183,7 +2187,15 @@ def _greedy_match_by_closeness(
     entry here either, even on a close distance/pace match: a botched-lap
     interval session's BLENDED average is exactly the case that can coincidentally
     land close to an easy/tempo/long target's numbers despite being
-    structurally nothing like a steady effort at that pace."""
+    structurally nothing like a steady effort at that pace.
+
+    A DURATION-only target is much weaker evidence than distance/pace —
+    nearly any session can last 45 minutes — so when that's all an entry
+    states, an easy entry won't take a hard activity (or vice versa) here.
+    That's what let a 43-min FTP ramp test claim "Rest or 30–45 min very
+    easy spin" instead of the FTP session planned for that very day.
+    Distance/pace targets keep overriding effort labels as before."""
+    hard_types = ("tempo", "interval")
     pairs = []
     for entry_id in entry_ids:
         target = session_targets.get(entry_id)
@@ -2219,6 +2231,11 @@ def _greedy_match_by_closeness(
                     rel_errs.append(rel_err)
                 # actual_pace missing (e.g. no duration on the activity) —
                 # just skip pace as a signal rather than reject the pair.
+
+            if ok and target_duration and not target_pace and plan_types and act_types:
+                planned, actual_type = plan_types.get(entry_id), act_types.get(act_date_str)
+                if (planned == "easy" and actual_type in hard_types) or (planned in hard_types and actual_type == "easy"):
+                    ok = False
 
             if ok and target_duration:
                 actual = metrics.get("duration")
@@ -2436,7 +2453,7 @@ def build_training_plan(plan: Optional[dict], activities: list[dict], client=Non
             pace_s_per_km = (a_duration / (a_distance / 1000)) if a_distance and a_duration else None
             act_metrics[d] = {"distance": a_distance, "duration": a_duration, "pace_s_per_km": pace_s_per_km}
         matched = _greedy_match_by_closeness(
-            entry_ids, act_dates, session_targets, act_metrics, plan_types, interval_like_dates
+            entry_ids, act_dates, session_targets, act_metrics, plan_types, interval_like_dates, act_types
         )
         claimed0 = set(matched.values())
         remaining_entries = entry_ids - set(matched)
