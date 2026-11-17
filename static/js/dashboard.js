@@ -1857,7 +1857,7 @@
         '<div class="race-when">' + raceWhere(r) + '</div>' +
         raceFacts(r) +
         raceExtras(r) +
-        renderCourseBlock(r) +
+        renderCourseBlock(r, { profile: true }) +
       '</div>' +
       '<div class="race-countdown" aria-live="off">' +
         '<div class="race-countdown-figure">' + (days === 0 ? 'Today' : (r.date_approx ? '~' : '') + days) + '</div>' +
@@ -1941,7 +1941,7 @@
       '<div class="race-when">' + raceWhere(r) + '</div>' +
       raceFacts(r) +
       raceExtras(r) +
-      renderCourseBlock(r) +
+      renderCourseBlock(r, { profile: false }) +
     '</article>';
   }
 
@@ -2057,7 +2057,11 @@
     return h ? h + ':' + pad2(m) + ':' + pad2(s2) : m + ':' + pad2(s2);
   }
 
-  function renderCourseBlock(r) {
+  // The elevation profile is drawn only for the featured (next) race — the
+  // smaller cards keep the course stats and splits without a cramped chart.
+  // Goals aren't events, so they get no course section at all.
+  function renderCourseBlock(r, opts) {
+    if (r.kind === 'goal') return '';
     const c = r.course;
     if (!c) {
       return '<div class="race-course empty" data-date="' + escapeHtml(r.date) + '">' +
@@ -2076,7 +2080,7 @@
       '<div class="rc-head"><span class="rc-label">Course</span><span class="rc-stats">' + escapeHtml(stats) + '</span>' +
         '<button type="button" class="rc-remove" data-course-remove title="Remove this course">Remove</button></div>' +
       (c.name ? '<div class="rc-name">' + escapeHtml(c.name) + '</div>' : '') +
-      '<div class="vc-plot rc-profile" data-profile></div>' +
+      (opts && opts.profile ? '<div class="vc-plot rc-profile" data-profile></div>' : '') +
       '<details class="rc-splits"><summary>Splits &amp; fuel</summary>' +
         '<div class="rc-target"><label>Target time <input type="text" inputmode="numeric" placeholder="h:mm:ss" data-target value="' +
           escapeHtml(targetText || (fromGoal ? fmtHms(fromGoal) : '')) + '"></label>' +
