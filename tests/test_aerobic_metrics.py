@@ -626,3 +626,38 @@ class FrozenReference(unittest.TestCase):
         self.sync.update_easy_refs("u", self._runs(152, n=2), date(2026, 11, 24))
         ref = self.store.get_refs("u")["RUNNING"]
         self.assertEqual((ref["hr_ref"], ref["hr_ref_source"]), (145, "hr_reserve"))
+
+
+class StoreRoundTrip(unittest.TestCase):
+    """save_activity -> chunk_points / durability_sessions / processed, on a
+    temp database (a column/placeholder mismatch once failed every activity)."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = os.environ.get("AEROBIC_DB")
+        os.environ["AEROBIC_DB"] = os.path.join(self.tmp.name, "t.db")
+        import aerobic_store
+        self.store = aerobic_store
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("AEROBIC_DB", None)
+        else:
+            os.environ["AEROBIC_DB"] = self._old
+        self.tmp.cleanup()
+
+    def test_save_and_read_back(self):
+        analysis = am.analyze_activity(details(ride(7200, lambda i: 163, lambda i: 130)), "virtual_ride", ZONES)
+        self.store.save_activity("u", "a1", "2026-11-24", "virtual_ride", "Z2", analysis, None, am.ALGO_VERSION)
+        pts = self.store.chunk_points("u", "bike_indoor")
+        self.assertEqual(len(pts), len(analysis["series"]["bike_indoor"]["points"]))
+        self.assertAlmostEqual(pts[0]["avg_output"], 163)
+        sess = self.store.durability_sessions("u")
+        self.assertEqual(sess[0]["method"], "regression")
+        self.assertEqual(self.store.processed_ids("u", am.ALGO_VERSION), {"a1"})
+        row = self.store._rows("SELECT chunk_reasons FROM processed WHERE activity_id = 'a1'")[0]
+        self.assertIn("bike_indoor", row["chunk_reasons"])
+        # Re-saving (reprocess) replaces, including chunk_reasons.
+        self.store.save_activity("u", "a1", "2026-11-24", "virtual_ride", "Z2", analysis, None, am.ALGO_VERSION)
+        self.assertEqual(len(self.store.chunk_points("u", "bike_indoor")), len(pts))

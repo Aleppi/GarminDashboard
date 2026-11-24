@@ -160,10 +160,10 @@ def save_activity(username: str, activity_id: str, day: str, type_key: str, name
         conn.execute(
             """INSERT INTO processed (username, activity_id, day, type_key, status, reason, algo_version, processed_at,
                                       chunk_reasons)
-               VALUES (?,?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(username, activity_id) DO UPDATE SET day = excluded.day, type_key = excluded.type_key,
                status = excluded.status, reason = excluded.reason, algo_version = excluded.algo_version,
-               processed_at = excluded.processed_at""",
+               processed_at = excluded.processed_at, chunk_reasons = excluded.chunk_reasons""",
             (username, aid, day, type_key, status, reason, algo_version, time.time(),
              json.dumps({k: s.get("reasons") or {} for k, s in series.items()}) if series else None),
         )
