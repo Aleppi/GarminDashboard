@@ -96,20 +96,39 @@ over the last 120 days stands in for HRmax.
   136 bpm". Lower means fitter. The reference output defaults to the median of
   your last 56 days of points, rounded to 5 W, 0.1 W/kg or a 5 s/km pace. It
   stays fixed after that, and you can pin your own in the expanded panel.
+- **When is the fit trusted?** All of these must hold:
+  - ≥ 8 points from ≥ 2 sessions;
+  - outputs spread over ≥ **15 %** of the median (max − min);
+  - a **physiologically plausible slope** b:
+
+    | Output | Plausible b |
+    |---|---|
+    | Power | **0.2–0.6 bpm/W** |
+    | Running speed / GAS | **0.15–0.75 bpm per m/min** (≈ 2.5–12.5 bpm per km/h) |
+    | Walking metabolic power | **2.5–12 bpm per W/kg** |
+
+    The run and hike bounds are the bike range carried over through
+    metabolic cost: about 23 % cycling efficiency, riders of 55–85 kg, and
+    Minetti's 3.6 J/kg/m flat running cost.
+  - elasticity `b · median output / median HR ≥ 0.10`.
+
+  A slope outside the plausible range is noise, not physiology. With
+  b = 0.15 bpm/W, a 10 bpm wobble becomes 67 W. A narrow output range leaves
+  the slope undetermined.
 - **Confidence**
-  - **high:** ≥ 8 points from ≥ 2 sessions, output range (max − min) ≥ 10 %
-    of the median, slope b > 0, HR responds to output (elasticity
-    `b · median output / median HR ≥ 0.10`), and HRref within 5 bpm of the HR
-    range actually seen.
-  - **medium:** the same fit, but HRref is outside that HR range, i.e. the fit
-    is extrapolated.
-  - **low:** no trustworthy fit, or it would land more than 25 % beyond the
-    outputs actually seen. The fallback is the median output/HR ratio × HRref
-    (or ref ÷ ratio for the inverse).
+  - **high:** a trusted fit from **≥ 15 points**, with HRref within 5 bpm
+    of the HR range actually seen.
+  - **medium:** a trusted fit from only **8–14 points**, or with HRref
+    outside the HR range seen (extrapolated).
+  - **low:** no trusted fit, or the fit would land more than 25 % beyond the
+    outputs actually seen. Instead we use the **median output/HR ratio** ×
+    HRref (or ref ÷ ratio for the inverse). Each week stores `fit_issue`
+    (`too_few_points`, `one_session`, `narrow_output_range`,
+    `slope_out_of_range`, `no_slope`, `hr_not_tracking_output`) and the raw
+    slope, and the chart tooltip shows the reason.
 
   The single-session rule exists because within one ride, HR drift at
-  constant power isn't an HR–output relationship. The elasticity rule exists
-  because a nearly flat slope makes `(HRref − a) / b` swing wildly.
+  constant power isn't an HR–output relationship.
 - **Trend:** change vs the week ending ~6 weeks earlier (absolute and %), plus
   a weekly sparkline. For pace, the change is also shown in s/km.
 
@@ -130,19 +149,30 @@ over the last 120 days stands in for HRmax.
     pace with HR following it for runs. It catches long steady reps like
     2×20 min, which have a low VI.
   - Whole-session variability after the first 10 min: VI (NP ÷ average)
-    **< 1.10**, or **< 1.15 for outdoor rides**. Terrain moves power around
-    even on a steady outdoor ride: hilly steady rides measured 1.10–1.15,
-    against 1.00–1.02 for indoor ERG. Speed-based sports use the same formula
-    on GAS or metabolic power.
+    **≤ 1.10 indoors**, **≤ 1.20 for outdoor rides**. Terrain moves power
+    around even on a steady outdoor ride, and the regression below compares
+    like with like. Runs and hikes use ≤ 1.10, with the same formula on GAS
+    or metabolic power.
 - Missing HR/output on more than 10 % of the time also disqualifies a session.
 - After dropping the first 10 min, the remaining moving time is split into
-  two equal halves. `EF = mean output ÷ mean HR` for each half (seconds where
-  both are present).
-- **Decoupling % = (EF₁ − EF₂) / EF₁ × 100**
+  **two equal halves**, and the decoupling is worked out one of three ways:
+
+| Method | When | How |
+|---|---|---|
+| `regression` (primary) | ≥ **4 valid 5-min chunks** in each half (the same filters as Aerobic Efficiency: aerobic HR band, steady HR, VI < 1.05 / CV < 5 %, ≥ 2 in a row), and the halves' chunk output ranges overlap (within 2 % of the median) | Fit HR = a + b·output on each half's chunks. Read both fits at a **common reference output**, the middle of the overlap. Decoupling % = (HR₂ − HR₁) / HR₂ × 100, the drop in output per heartbeat at the same output. Within one session the output range can be tiny (ERG), so each half's slope is clamped to 0…the plausible maximum and re-centred on that half's mean. The reading then always stays inside the data. |
+| `np_ef` (fallback) | too few chunks or no overlap, and the halves' **NP differ by ≤ 10 %** | EF = NP ÷ mean HR per half. Runs and hikes use mean GAS / metabolic power, which already account for terrain. Decoupling % = (EF₁ − EF₂) / EF₁ × 100. |
+| `excluded` | neither | Output changed too much between the halves to compare. Stored with no score and listed separately (`durability_excluded`). |
+
 - **< 5 %** strong · **5–8 %** moderate · **> 8 %** low.
-- The card shows the last eligible session and the last 8 as bars. Indoor and
+- Why regression first: a plain first-half vs second-half output/HR compares
+  different efforts when the second half is harder, easier or hillier, and
+  HR isn't proportional to output (it has an offset), so a lower output alone
+  lowers output/HR. Reading both halves at the same output removes that.
+- The card shows the last scored session and the last 8 as bars. Indoor and
   outdoor are kept separate, and outdoor sessions show the temperature (heat
-  raises late-session HR).
+  raises late-session HR). Each session carries `method`, `chunks_per_half`,
+  `reference_output` with `hr_at_reference_output` (regression), and
+  `normalized_output` per half.
 
 ## 5. Caching and compute
 
