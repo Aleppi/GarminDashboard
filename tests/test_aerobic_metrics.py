@@ -571,7 +571,9 @@ class Durability(unittest.TestCase):
         res = am.analyze_activity(details(ride(7200, lambda i: 163, lambda i: 130)), "virtual_ride", ZONES,
                                   interval_session=True)
         self.assertEqual(res["series"]["bike_indoor"]["durability_reason"], "intervals")
-        self.assertTrue(res["series"]["bike_indoor"]["points"])  # steady chunks still count
+        # Nor for efficiency: an interval session's steady stretches are recoveries.
+        self.assertEqual(res["series"]["bike_indoor"]["points"], [])
+        self.assertGreater(res["series"]["bike_indoor"]["reasons"]["interval_session"], 0)
 
     def test_labels(self):
         self.assertEqual(am.durability_label(4.9), "strong")

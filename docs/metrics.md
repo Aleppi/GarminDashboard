@@ -100,6 +100,12 @@ For each activity and series:
      (any sport). HR stays raised for minutes after an effort, so a steady
      chunk there reads too much HR for its output, e.g. the recoveries of an
      interval ride.
+   - **not from an interval session:** if the dashboard's interval detection
+     flags the ride or run (lap power for rides with power, pace with HR
+     following it for runs), none of its chunks count. Its "steady" stretches
+     are recoveries with HR still raised from the reps. Sweet-spot reps
+     (~86 % FTP, under LTHR) slip past the post-effort triggers, and their
+     recoveries (150 W at 140–144 bpm) pulled the outdoor value ~18 W low.
 6. Only runs of **≥ 2 consecutive valid chunks** (≥ 10 min steady) count.
    Each valid chunk becomes one point: (output, mean HR, date, temperature
    for outdoor activities). **For power the output is the chunk's normalized

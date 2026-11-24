@@ -151,10 +151,10 @@ def _weather_temp_c(client, activity_id: Any) -> Optional[float]:
 def _is_interval_session(client, activity: dict) -> bool:
     """The dashboard's own interval detection (lap power for rides with power,
     pace + HR structure for runs) — the same check that labels sessions
-    "interval" elsewhere. Only asked for sessions long enough for Durability,
-    since it can cost an extra Garmin request (laps)."""
-    if (activity.get("movingDuration") or activity.get("duration") or 0) < am.DURABILITY_MIN_MOVING_S:
-        return False
+    "interval" elsewhere. Interval sessions feed neither Durability nor
+    Aerobic Efficiency (their "steady" stretches are recoveries with HR still
+    raised), so it's asked for every ride/run; it can cost one extra Garmin
+    request (laps), once per activity."""
     import dashboard_data  # local import: heavy module, only needed here
 
     type_key = (activity.get("activityType") or {}).get("typeKey", "")

@@ -26,7 +26,7 @@ from typing import Any, Iterable, Optional
 
 # Bump whenever a change below would alter cached results: the sync job
 # reprocesses every activity whose stored algo_version is older.
-ALGO_VERSION = 7  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
+ALGO_VERSION = 8  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
                   # 3: durability by per-half regression (NP-EF fallback), outdoor-bike VI 1.20
                   # 4: outdoor-bike chunk VI 1.10, per-half VI check on NP-EF, ski touring
                   #    (uphill only) and snowshoeing in walk_outdoor
@@ -34,6 +34,7 @@ ALGO_VERSION = 7  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval
                   #    floor 30% HRR
                   # 6: HR trend limit 2 bpm/min, walking output CV limit 15%
                   # 7: chunk output = NP for power series; post-effort chunk exclusion
+                  # 8: no efficiency chunks from interval sessions (any length)
 
 WARMUP_S = 600                 # dropped from the start of each activity (HR settling)
 CHUNK_S = 300                  # one data point per 5 min of steady effort
@@ -792,6 +793,14 @@ def analyze_activity(details: dict, type_key: str, zones: dict[str, dict], inter
         out = output_signal(grid, key, uphill_only=uphill_only)
         points, reasons = steady_chunks(grid, key, z["hr_max"], z.get("lthr"), out=out, hr_rest=z.get("hr_rest"),
                                         ftp=z.get("ftp") if SERIES[key]["signal"] == "power" else None)
+        if interval_session and points:
+            # Detected interval session (laps / pace structure): its steady
+            # stretches are recoveries between efforts, HR still raised
+            # (e.g. 150 W at 140-144 bpm after 220 W reps, below the
+            # post-effort triggers), so none of it counts for efficiency.
+            reasons["interval_session"] = len(points)
+            reasons["ok"] = reasons.get("ok", 0) - len(points)
+            points = []
         if uphill_only:
             dur, dur_reason = None, "uphill_only"
         else:
