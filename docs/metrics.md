@@ -77,8 +77,17 @@ For each activity and series:
 5. A chunk is **valid** if all of these hold:
    - ≥ 95 % of its seconds have both HR and output (no missing data)
    - mean HR is in the **aerobic band**: 65 % to 85 % of HRmax, capped at LTHR
-     when that's lower
-   - HR standard deviation < 5 bpm (not catching a transition)
+     when that's lower. **Walking/hiking/ski touring** start lower, at
+     `HRrest + 0.30 · (HRmax − HRrest)` (30 % of HR reserve; 50 % of HRmax if
+     resting HR is unknown). Slow walking on gentle grades is 80–125 bpm, well
+     under 65 % of HRmax, and HR still tracks VO₂ linearly above ~30 % of
+     reserve.
+   - **HR not trending:** the least-squares slope of the 30 s-smoothed HR
+     across the chunk is within **±1.0 bpm/min**. A chunk still catching a
+     transition (HR settling after a change, or drifting) is rejected. HR that
+     *oscillates* around a flat level is kept, e.g. ±10 bpm over rollers. An
+     HR-spread rule (< 5 bpm) used to reject nearly every outdoor chunk for
+     exactly that.
    - low variability: **power** VI = NP ÷ average ≤ 1.05 indoors, **≤ 1.10
      for outdoor rides**, where rollers move power around at a steady effort
      (NP from 30 s rolling power); **speed-based** CV of the 30 s rolling
@@ -94,56 +103,63 @@ over the last 120 days stands in for HRmax.
 
 ## 3. Aerobic Efficiency
 
-- **Model:** for each series, a rolling **28-day window**, evaluated weekly
-  (every Sunday, plus today for the week in progress). Within the window we fit
-  **HR = a + b · output** with a robust **Huber** regression (iteratively
-  reweighted least squares, scale from the median absolute deviation). We use
-  Huber rather than Theil–Sen because it accepts per-point weights, which the
-  heat handling needs.
+- **Model: shared slope, per-window intercept.** HR = a + b · output.
+  - **One slope b per user and sport:**
+    - Sports: cycling (indoor + outdoor pooled), running, walking.
+    - Fitted with **Theil–Sen** (median of pairwise slopes) over every valid
+      chunk of the last **180 days**.
+    - Pairs only between chunks of the **same series** ≤ 28 days apart, whose
+      outputs differ by ≥ 5 % of the median. The indoor/outdoor HR offset
+      and fitness changes over months move the intercept, not the slope, and
+      would bias pairs across them. Near-equal outputs make the pair's ratio
+      pure noise.
+    - The slope must be **physiologically plausible**:
+
+      | Output | Plausible b | Population default |
+      |---|---|---|
+      | Power | 0.2–0.6 bpm/W | **0.30 bpm/W** |
+      | Running speed / GAS | 0.15–0.75 bpm per m/min (≈ 2.5–12.5 bpm per km/h) | **0.40 bpm per m/min** |
+      | Walking metabolic power | 2.5–12 bpm per W/kg | **6 bpm per W/kg** |
+
+      The run and hike ranges are the bike range carried over through
+      metabolic cost: about 23 % cycling efficiency, riders of 55–85 kg, and
+      Minetti's 3.6 J/kg/m flat running cost.
+    - `source`:
+      - `fitted`: plausible, from ≥ 40 chunks.
+      - `shrunk`: plausible but fewer chunks, blended
+        `b = w · fitted + (1 − w) · default` with `w = n / 40`.
+      - `default`: fewer than 8 chunks or 2 sessions, under 20 pairs, or an
+        implausible fit.
+  - **Per series (indoor/outdoor) and rolling 28-day window** (weekly: every
+    Sunday, plus today): only the intercept,
+    `a_w = median(HR_i − b · output_i)`. It's heat-weighted (§ Heat).
+  - Why: a slope fitted inside one 28-day window rests on a few sessions. On
+    a narrow output range it swung freely, and so did the headline (outdoor
+    bike jumped between ~155 and ~210 W). Fitness moves the line up and down,
+    not its steepness, so that's what each window estimates now.
 - **Reference HR** per sport: `HRref = HRrest + 0.65 · (HRmax − HRrest)`,
-  rounded. HRrest is Garmin's configured resting HR if you set one. Otherwise
-  it's the median of your daily resting HR over 28 days, measured once and then
-  **frozen**, so the whole history stays comparable. HRref only changes when
-  HRmax or a configured resting HR changes.
-- **Headline:** `Output@HRref = (HRref − a) / b`, e.g. "Power at 137 bpm:
+  rounded, or **0.40 for walking/hiking**, so it sits inside the HR range
+  hikes actually produce. HRrest is Garmin's configured resting HR if you set
+  one. Otherwise it's the median of your daily resting HR over 28 days,
+  measured once and then **frozen**, so the whole history stays comparable.
+- **Headline:** `Output@HRref = (HRref − a_w) / b`, e.g. "Power at 137 bpm:
   177 W" or "Pace at 145 bpm: 5:12/km". Higher means fitter.
-- **Inverse:** `HR at reference output = a + b · ref`, e.g. "HR at 175 W:
-  136 bpm". Lower means fitter. The reference output defaults to the median of
-  your last 56 days of points, rounded to 5 W, 0.1 W/kg or a 5 s/km pace. It
-  stays fixed after that, and you can pin your own in the expanded panel.
-- **When is the fit trusted?** All of these must hold:
-  - ≥ 8 points from ≥ 2 sessions;
-  - outputs spread over ≥ **15 %** of the median (max − min);
-  - a **physiologically plausible slope** b:
+- **Inverse:** `HR at reference output = a_w + b · ref`. Lower means fitter.
+  The reference output defaults to the median of your last 56 days of points,
+  rounded to 5 W, 0.1 W/kg or a 5 s/km pace. It stays fixed after that, and
+  you can pin your own in the expanded panel.
+- **Confidence** comes from the window's own data: points n, and the residual
+  MAD, the median |HR − a_w − b · output| in bpm.
+  - **high:** n ≥ 15 and MAD ≤ 3 bpm.
+  - **medium:** n ≥ 8 and MAD ≤ 5 bpm.
+  - **low:** otherwise.
 
-    | Output | Plausible b |
-    |---|---|
-    | Power | **0.2–0.6 bpm/W** |
-    | Running speed / GAS | **0.15–0.75 bpm per m/min** (≈ 2.5–12.5 bpm per km/h) |
-    | Walking metabolic power | **2.5–12 bpm per W/kg** |
-
-    The run and hike bounds are the bike range carried over through
-    metabolic cost: about 23 % cycling efficiency, riders of 55–85 kg, and
-    Minetti's 3.6 J/kg/m flat running cost.
-  - elasticity `b · median output / median HR ≥ 0.10`.
-
-  A slope outside the plausible range is noise, not physiology. With
-  b = 0.15 bpm/W, a 10 bpm wobble becomes 67 W. A narrow output range leaves
-  the slope undetermined.
-- **Confidence**
-  - **high:** a trusted fit from **≥ 15 points**, with HRref within 5 bpm
-    of the HR range actually seen.
-  - **medium:** a trusted fit from only **8–14 points**, or with HRref
-    outside the HR range seen (extrapolated).
-  - **low:** no trusted fit, or the fit would land more than 25 % beyond the
-    outputs actually seen. Instead we use the **median output/HR ratio** ×
-    HRref (or ref ÷ ratio for the inverse). Each week stores `fit_issue`
-    (`too_few_points`, `one_session`, `narrow_output_range`,
-    `slope_out_of_range`, `no_slope`, `hr_not_tracking_output`) and the raw
-    slope, and the chart tooltip shows the reason.
-
-  The single-session rule exists because within one ride, HR drift at
-  constant power isn't an HR–output relationship.
+  There is no ratio fallback any more: with a fixed slope every window has a
+  well-defined value.
+- **API:** each series carries `slope` {b, unit, source, b_fitted, default,
+  points, activities, pairs, reason}. Each week carries `intercept_bpm`,
+  `slope_bpm_per_unit` and `residual_mad_bpm`. The snapshot has `slope_b`,
+  `slope_source` and `residual_mad_bpm`.
 - **Trend:** change vs the week ending ~6 weeks earlier (absolute and %), plus
   a weekly sparkline. For pace, the change is also shown in s/km.
 

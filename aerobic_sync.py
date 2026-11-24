@@ -110,16 +110,16 @@ def refresh_refs(username: str, client, activities: list[dict]) -> dict[str, dic
                 hr_rest = measured_rest
         if not hr_rest:
             continue
-        hr_ref = prev.get("hr_ref")
-        if not hr_ref or prev.get("hr_max") != hr_max or prev.get("hr_rest") != hr_rest:
-            hr_ref = am.reference_hr(hr_rest, hr_max)
+        # Deterministic from the (frozen) HRmax / resting HR and the sport's
+        # fraction, so recomputing it every run never moves it by itself.
+        hr_ref = am.reference_hr(hr_rest, hr_max, sport)
         if (prev.get("hr_max"), prev.get("hr_rest"), prev.get("lthr"), prev.get("hr_ref")) != (hr_max, hr_rest, lthr, hr_ref):
             store.save_ref(username, zone_sport, hr_max, hr_rest, lthr, hr_ref, source)
     return store.get_refs(username)
 
 
 def zones_for_analysis(refs: dict[str, dict]) -> dict[str, dict]:
-    return {zs: {"hr_max": r["hr_max"], "lthr": r.get("lthr")} for zs, r in refs.items()}
+    return {zs: {"hr_max": r["hr_max"], "lthr": r.get("lthr"), "hr_rest": r.get("hr_rest")} for zs, r in refs.items()}
 
 
 # --------------------------------------------------------------- activities --
@@ -191,12 +191,23 @@ def rebuild_weekly(username: str, today: Optional[date] = None) -> None:
     today = today or date.today()
     heat = heat_correction_enabled()
     existing = store.get_ref_outputs(username)
+    by_series: dict[str, list[dict]] = {}
     for series in store.series_with_points(username):
         rows = store.chunk_points(username, series)
         for r in rows:
             r["date"] = date.fromisoformat(r["day"])
-        store.replace_weekly(username, series, am.weekly_windows(rows, today, heat_correction=heat,
-                                                                    unit=am.SERIES[series]["unit"]))
+        by_series[series] = rows
+    # One slope per sport (cycling pools indoor + outdoor), shared by every
+    # series and week of that sport; the windows only fit intercepts.
+    slopes: dict[str, dict] = {}
+    for sport in {am.SERIES[s]["sport"] for s in by_series}:
+        unit = next(m["unit"] for m in am.SERIES.values() if m["sport"] == sport)
+        pooled = [r for s, rows in by_series.items() if am.SERIES[s]["sport"] == sport for r in rows]
+        slopes[sport] = am.sport_slope(pooled, unit, today)
+        store.save_slope(username, sport, unit, slopes[sport])
+    for series, rows in by_series.items():
+        b = slopes[am.SERIES[series]["sport"]]["b"]
+        store.replace_weekly(username, series, am.weekly_windows(rows, today, b, heat_correction=heat))
         if series not in existing:
             since = (today - timedelta(days=DEFAULT_REF_OUTPUT_DAYS)).isoformat()
             recent = [r["output"] for r in rows if r["day"] >= since] or [r["output"] for r in rows]

@@ -422,20 +422,21 @@ def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bo
     raw activity streams — not Garmin's estimates. Use it for questions about
     aerobic fitness trends, base building, or whether easy volume is working.
 
-    Aerobic Efficiency: only steady 5-min chunks inside the aerobic HR band
-    (65-85% HRmax, capped at LTHR; first 10 min, stops and intervals dropped)
-    count. Each week, a robust HR = a + b*output fit over the trailing 28 days
-    gives output_at_hr_ref (power, grade-adjusted pace, or walking metabolic
-    power at a fixed reference HR — higher = fitter) and hr_at_ref_output
-    (lower = fitter). confidence: high = trustworthy fit from >= 15 points
-    with the reference HR inside the HR range seen; medium = trustworthy fit
-    but 8-14 points or extrapolated; low = no trustworthy fit (fit_issue says
-    why: too_few_points, one_session, narrow_output_range (< 15%),
-    slope_out_of_range (bike 0.2-0.6 bpm/W, run 0.15-0.75 bpm per m/min,
-    hike 2.5-12 bpm per W/kg), ...), so method "ratio": the median
-    output/HR ratio scaled to the reference HR. Indoor and outdoor are
-    separate series; outdoor weeks carry mean temperature (heat raises HR,
-    so a hot week reads less fit).
+    Aerobic Efficiency: only steady 5-min chunks count — aerobic HR band
+    (65-85% HRmax capped at LTHR; walking/hiking from 30% of HR reserve),
+    HR not trending more than 1 bpm/min, low output variability (VI <= 1.05
+    indoors, <= 1.10 outdoor rides); first 10 min, stops and intervals
+    dropped. Model: one HR = a + b*output slope per sport (cycling pools
+    indoor+outdoor), Theil-Sen over 180 days — series[].slope gives b, its
+    source ("fitted"; "shrunk" toward the population default when data is
+    thin; "default" = 0.30 bpm/W, 0.40 bpm per m/min, 6 bpm per W/kg when too
+    little data or implausible) — and per series and weekly 28-day window
+    only the intercept a_w = median(HR - b*output). output_at_hr_ref =
+    (HR_ref - a_w)/b (higher = fitter), hr_at_ref_output = a_w + b*ref
+    (lower = fitter). confidence from the window's points and residual MAD:
+    high >= 15 points & MAD <= 3 bpm, medium >= 8 & <= 5, else low. Indoor
+    and outdoor are separate series; outdoor weeks carry mean temperature
+    (heat raises HR, so a hot week reads less fit).
 
     Durability: sessions >= 90 min moving without intervals (VI <= 1.10,
     outdoor rides <= 1.20). method "regression": HR~output fitted on each

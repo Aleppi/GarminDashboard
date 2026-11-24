@@ -25,10 +25,12 @@ from typing import Any, Iterable, Optional
 
 # Bump whenever a change below would alter cached results: the sync job
 # reprocesses every activity whose stored algo_version is older.
-ALGO_VERSION = 4  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
+ALGO_VERSION = 5  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
                   # 3: durability by per-half regression (NP-EF fallback), outdoor-bike VI 1.20
                   # 4: outdoor-bike chunk VI 1.10, per-half VI check on NP-EF, ski touring
                   #    (uphill only) and snowshoeing in walk_outdoor
+                  # 5: chunk HR trend (|slope| <= 1 bpm/min) instead of HR spread; walking HR
+                  #    floor 30% HRR
 
 WARMUP_S = 600                 # dropped from the start of each activity (HR settling)
 CHUNK_S = 300                  # one data point per 5 min of steady effort
@@ -38,7 +40,10 @@ SEGMENT_BREAK_S = 30           # a stop/pause this long splits a steady segment
 FILL_MAX_GAP_S = 10            # samples further apart than this = timer paused, not smart recording
 HR_BAND_LO = 0.65              # aerobic band, fraction of HRmax...
 HR_BAND_HI = 0.85              # ...capped at LTHR when that's lower
-CHUNK_HR_STD_MAX = 5.0         # bpm; higher = HR still moving (a transition)
+CHUNK_HR_TREND_MAX = 1.0       # bpm/min; |slope| of 30 s-smoothed HR across the chunk. Steeper = HR
+                               # still settling or drifting (a transition). A trend, not a spread: on
+                               # rolling terrain HR oscillates +-5-15 bpm around a flat level, which is
+                               # steady for our purposes
 CHUNK_VI_MAX = 1.05            # power: NP / avg power (inclusive)
 # Outdoor loops with small rollers move power around even at a steady
 # effort; 1.05 left 0-4 chunks per half on every long outdoor ride.
@@ -68,15 +73,28 @@ UPHILL_MIN_GRADE = 0.05              # ski touring: only seconds climbing steepe
 MOVING_SPEED = 1.0             # m/s; a coasting rider (zero power) is still moving
 DURABILITY_COVERAGE_MIN = 0.90
 WINDOW_DAYS = 28
-MIN_POINTS_FIT = 8             # fewer: "low" (ratio fallback)
-MIN_POINTS_HIGH = 15           # 8-14 points: at best "medium"
-MIN_ACTIVITIES_FIT = 2         # a slope from one session mostly measures that session's cardiac drift
-MAX_EXTRAPOLATION = 0.25       # fitted output may sit at most 25% beyond the outputs actually seen
-MIN_ELASTICITY = 0.10          # %HR change per % output change; flatter = HR isn't tracking output
-MIN_OUTPUT_RANGE = 0.15        # (max - min) / median output needed for a meaningful slope
+# Shared-slope model: one HR-vs-output slope b per user and sport (cycling
+# pools indoor + outdoor; running; walking), Theil-Sen over the trailing
+# SLOPE_DAYS of chunks. Each series' weekly window then only estimates its
+# intercept, a_w = median(HR - b*output). A slope fitted per 28-day window
+# rests on a handful of sessions and swung the outdoor value 155 <-> 210 W.
+SLOPE_DAYS = 180
+SLOPE_PAIR_MAX_DAYS = 28       # pairs only between chunks of one series <= 28 days apart: fitness and
+                               # the indoor/outdoor offset move the intercept, not the slope
+SLOPE_PAIR_MIN_DOUT = 0.05     # pairs need |delta output| >= 5% of the median output (else the ratio is noise)
+SLOPE_MIN_POINTS = 8           # fewer, or fewer than SLOPE_MIN_ACTIVITIES: population default
+SLOPE_MIN_ACTIVITIES = 2
+SLOPE_MIN_PAIRS = 20
+SLOPE_FULL_POINTS = 40         # from here the fitted slope is used as-is; below, shrunk toward the default
+SLOPE_MAX_POINTS = 800         # Theil-Sen is O(n^2) pairs: thin (evenly) beyond this
+DEFAULT_SLOPE = {"W": 0.30, "m/min": 0.40, "W/kg": 6.0}
+# Confidence from the window's own data: points and the median absolute
+# residual (bpm) around the shared-slope line.
+CONF_HIGH = (15, 3.0)          # >= 15 points and MAD <= 3 bpm
+CONF_MEDIUM = (8, 5.0)         # >= 8 points and MAD <= 5 bpm; anything else is low
 # Physiologically plausible HR-vs-output slopes (bpm per output unit). A
-# fit outside them is noise, not physiology, and solving it for HRref gives
-# nonsense (e.g. b = 0.15 bpm/W turns a 10 bpm error into 67 W). Bike is the
+# fitted sport slope outside them is noise, not physiology, and is replaced
+# by DEFAULT_SLOPE (b = 0.15 bpm/W would turn a 10 bpm error into 67 W). Bike is the
 # anchor: 0.2-0.6 bpm/W. Converted through metabolic cost (~23% cycling
 # efficiency, 55-85 kg riders), that's ~2.5-12 bpm per W/kg of metabolic
 # power — the walking bound — and, at Minetti's 3.6 J/kg/m flat running
@@ -87,6 +105,14 @@ HEAT_DOWNWEIGHT_C = 25.0       # outdoor points above this count half
 HEAT_CORRECTION_BASE_C = 20.0  # optional HR correction: -1 bpm per degree above this
 HEAT_CORRECTION_BPM_PER_C = 1.0
 REF_HR_FRACTION = 0.65         # HRref = rest + 0.65 * (max - rest)
+# Walking and hiking sit far below running/cycling HR: slow walking on
+# gentle grades is ~80-125 bpm, under 65% of HRmax. For the walking sport
+# the band's floor is 30% of HR reserve instead (above that, HR still
+# tracks VO2 linearly), and the reference HR is 40% of HR reserve so it
+# sits inside the HR range hikes actually produce.
+WALK_HR_FLOOR_HRR = 0.30
+WALK_HR_FLOOR_FALLBACK = 0.50  # fraction of HRmax when resting HR is unknown
+REF_HR_FRACTION_BY_SPORT = {"walking": 0.40}
 
 
 # ---------------------------------------------------------------- Minetti --
@@ -421,8 +447,11 @@ def smoothed_cv(values: list[float]) -> Optional[float]:
 
 # ---------------------------------------------------------------- chunks --
 
-def hr_band(hr_max: float, lthr: Optional[float]) -> tuple[float, float]:
+def hr_band(hr_max: float, lthr: Optional[float], hr_rest: Optional[float] = None,
+            sport: Optional[str] = None) -> tuple[float, float]:
     lo, hi = HR_BAND_LO * hr_max, HR_BAND_HI * hr_max
+    if sport == "walking":
+        lo = (hr_rest + WALK_HR_FLOOR_HRR * (hr_max - hr_rest)) if hr_rest else WALK_HR_FLOOR_FALLBACK * hr_max
     if lthr:
         hi = min(hi, float(lthr))
     return lo, hi
@@ -430,6 +459,19 @@ def hr_band(hr_max: float, lthr: Optional[float]) -> tuple[float, float]:
 
 def _filled(values: list[Optional[float]]) -> list[float]:
     return [v for v in values if v is not None]
+
+
+def hr_trend_bpm_per_min(hrs: list[float]) -> Optional[float]:
+    """Least-squares slope of the 30 s-smoothed HR over the chunk, in bpm/min
+    (one sample per second)."""
+    smooth = rolling_mean_trailing(hrs, SMOOTH_S)
+    n = len(smooth)
+    if n < 2:
+        return None
+    mx = (n - 1) / 2
+    my = statistics.fmean(smooth)
+    sxx = sum((i - mx) ** 2 for i in range(n))
+    return sum((i - mx) * (y - my) for i, y in enumerate(smooth)) / sxx * 60
 
 
 def evaluate_chunk(hr: list[Optional[float]], out: list[Optional[float]], signal: str,
@@ -447,8 +489,9 @@ def evaluate_chunk(hr: list[Optional[float]], out: list[Optional[float]], signal
         return None, "no_output"
     if not band[0] <= mean_hr <= band[1]:
         return None, "hr_outside_band"
-    if statistics.pstdev(hrs) >= CHUNK_HR_STD_MAX:
-        return None, "hr_unstable"
+    trend = hr_trend_bpm_per_min(hrs)
+    if trend is None or abs(trend) > CHUNK_HR_TREND_MAX:
+        return None, "hr_drifting"
     if signal == "power":
         vi = variability_index(outs)
         if vi is None or vi > vi_max:
@@ -461,14 +504,15 @@ def evaluate_chunk(hr: list[Optional[float]], out: list[Optional[float]], signal
 
 
 def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
-                  out: Optional[list[Optional[float]]] = None) -> tuple[list[dict], dict]:
+                  out: Optional[list[Optional[float]]] = None,
+                  hr_rest: Optional[float] = None) -> tuple[list[dict], dict]:
     """Valid 5-min chunk points for one series, plus a count of why the
     other chunks were rejected (useful for the "why no data?" question)."""
     if out is None:
         out = output_signal(grid, series)
     idx, breaks = active_seconds(grid, series)
     idx, breaks = idx[WARMUP_S:], breaks[WARMUP_S:]
-    band = hr_band(hr_max, lthr)
+    band = hr_band(hr_max, lthr, hr_rest=hr_rest, sport=SERIES[series]["sport"])
     signal = SERIES[series]["signal"]
     vi_max = CHUNK_VI_MAX_BY_SERIES.get(series, CHUNK_VI_MAX)
 
@@ -680,7 +724,7 @@ def analyze_activity(details: dict, type_key: str, zones: dict[str, dict], inter
             result["series"][key] = {"points": [], "durability": None, "durability_reason": "no_hr_max", "reasons": {}}
             continue
         out = output_signal(grid, key, uphill_only=uphill_only)
-        points, reasons = steady_chunks(grid, key, z["hr_max"], z.get("lthr"), out=out)
+        points, reasons = steady_chunks(grid, key, z["hr_max"], z.get("lthr"), out=out, hr_rest=z.get("hr_rest"))
         if uphill_only:
             dur, dur_reason = None, "uphill_only"
         else:
@@ -691,8 +735,8 @@ def analyze_activity(details: dict, type_key: str, zones: dict[str, dict], inter
 
 # --------------------------------------------------------------- the model --
 
-def reference_hr(hr_rest: float, hr_max: float) -> int:
-    return int(round(hr_rest + REF_HR_FRACTION * (hr_max - hr_rest)))
+def reference_hr(hr_rest: float, hr_max: float, sport: Optional[str] = None) -> int:
+    return int(round(hr_rest + REF_HR_FRACTION_BY_SPORT.get(sport, REF_HR_FRACTION) * (hr_max - hr_rest)))
 
 
 def heat_weight(temp_c: Optional[float]) -> float:
@@ -747,99 +791,120 @@ def huber_fit(xs: list[float], ys: list[float], ws: Optional[list[float]] = None
     return fit
 
 
-def fit_issue(n: int, n_activities: int, out_range: float, b: Optional[float],
-              elasticity: Optional[float], unit: Optional[str]) -> Optional[str]:
-    """Why a window's HR~output fit can't be trusted (None = it can)."""
-    if n < MIN_POINTS_FIT:
-        return "too_few_points"
-    if n_activities < MIN_ACTIVITIES_FIT:
-        return "one_session"
-    if out_range < MIN_OUTPUT_RANGE:
-        return "narrow_output_range"
-    if b is None or b <= 0:
-        return "no_slope"
-    lo, hi = SLOPE_BOUNDS.get(unit or "", (None, None))
-    if lo is not None and not lo <= b <= hi:
-        return "slope_out_of_range"
-    if elasticity is None or elasticity < MIN_ELASTICITY:
-        return "hr_not_tracking_output"
-    return None
+def theil_sen(points: list[dict]) -> tuple[Optional[float], int]:
+    """Median pairwise slope dHR/doutput over the allowed pairs (same series,
+    <= SLOPE_PAIR_MAX_DAYS apart, output differing by >= SLOPE_PAIR_MIN_DOUT
+    of the median). Returns (slope or None, number of pairs)."""
+    pts = sorted(points, key=lambda p: (p["date"], p.get("t_start", 0)))
+    if len(pts) > SLOPE_MAX_POINTS:
+        step = len(pts) / SLOPE_MAX_POINTS
+        pts = [pts[int(i * step)] for i in range(SLOPE_MAX_POINTS)]
+    if len(pts) < 2:
+        return None, 0
+    min_dx = SLOPE_PAIR_MIN_DOUT * statistics.median(p["output"] for p in pts)
+    slopes = []
+    for i, p in enumerate(pts):
+        for q in pts[i + 1:]:
+            if (q["date"] - p["date"]).days > SLOPE_PAIR_MAX_DAYS:
+                break
+            if q.get("series") != p.get("series"):
+                continue
+            dx = q["output"] - p["output"]
+            if abs(dx) >= min_dx:
+                slopes.append((q["hr"] - p["hr"]) / dx)
+    return (statistics.median(slopes) if slopes else None), len(slopes)
 
 
-def fit_window(points: list[dict], heat_correction: bool = False, unit: Optional[str] = None) -> Optional[dict]:
-    """Model one 28-day window of chunk points. Stored as-is; the headline
-    value is derived at read time (window_headline) so a changed reference
-    HR or pinned reference output never needs a refit. `unit` selects the
-    plausible-slope bounds (SLOPE_BOUNDS); without it they aren't applied."""
+def sport_slope(points: list[dict], unit: str, today: date) -> dict:
+    """One HR-vs-output slope for a user's sport, from every valid chunk
+    (all its series) in the trailing SLOPE_DAYS. Points need date, output,
+    hr, series, activity_id.
+
+    source "fitted": Theil-Sen slope, plausible, >= SLOPE_FULL_POINTS points.
+    source "shrunk": plausible but fewer points: weighted toward the default
+                     by n / SLOPE_FULL_POINTS.
+    source "default": too little data, or the fit is implausible
+                      (SLOPE_BOUNDS) — the population default is used."""
+    since = today - timedelta(days=SLOPE_DAYS)
+    pts = [p for p in points if p.get("output") and p.get("hr") and p["date"] >= since]
+    default = DEFAULT_SLOPE[unit]
+    n = len(pts)
+    n_act = len({p.get("activity_id") for p in pts})
+    fitted, n_pairs = theil_sen(pts) if n >= 2 else (None, 0)
+    lo, hi = SLOPE_BOUNDS[unit]
+    out = {"b": default, "source": "default", "b_fitted": fitted, "n": n, "n_activities": n_act,
+           "n_pairs": n_pairs, "default": default, "reason": None}
+    if n < SLOPE_MIN_POINTS or n_act < SLOPE_MIN_ACTIVITIES or n_pairs < SLOPE_MIN_PAIRS or fitted is None:
+        out["reason"] = "too_little_data"
+    elif not lo <= fitted <= hi:
+        out["reason"] = "fitted_slope_out_of_range"
+    elif n >= SLOPE_FULL_POINTS:
+        out.update(b=fitted, source="fitted")
+    else:
+        w = n / SLOPE_FULL_POINTS
+        out.update(b=w * fitted + (1 - w) * default, source="shrunk")
+    return out
+
+
+def weighted_median(values: list[float], weights: list[float]) -> float:
+    pairs = sorted(zip(values, weights))
+    half = sum(weights) / 2
+    acc = 0.0
+    for v, w in pairs:
+        acc += w
+        if acc >= half:
+            return v
+    return pairs[-1][0]
+
+
+def fit_window(points: list[dict], b: float, heat_correction: bool = False) -> Optional[dict]:
+    """One series' 28-day window under the shared slope b: only the
+    intercept a_w = (heat-weighted) median(HR - b*output) is estimated.
+    Stored as-is; the headline is derived at read time (window_headline) so
+    a changed reference HR or pinned reference output never needs a refit."""
     pts = [p for p in points if p.get("output") and p.get("hr")]
-    if not pts:
+    if not pts or not b:
         return None
     xs = [p["output"] for p in pts]
     ys = [heat_corrected_hr(p["hr"], p.get("temp_c")) if heat_correction else p["hr"] for p in pts]
     ws = [heat_weight(p.get("temp_c")) for p in pts]
-    median_out = statistics.median(xs)
-    out_range = (max(xs) - min(xs)) / median_out if median_out else 0.0
-    fit = huber_fit(xs, ys, ws) if len(pts) >= 2 else None
-    n_activities = len({p.get("activity_id", i) for i, p in enumerate(pts)})
-    # Elasticity: a 10% output change should move HR by >= 1%. A flatter
-    # slope means HR in this window isn't tracking output (heat, fatigue,
-    # sensor noise), and solving it for HRref would be wildly unstable.
-    elasticity = fit[1] * median_out / statistics.median(ys) if fit else None
-    issue = fit_issue(len(pts), n_activities, out_range, fit[1] if fit else None, elasticity, unit)
-    fit_ok = issue is None
-    ratios = [x / y for x, y in zip(xs, ys) if y]
+    a = weighted_median([y - b * x for x, y in zip(xs, ys)], ws)
+    mad = statistics.median(abs(y - a - b * x) for x, y in zip(xs, ys))
     temps = [p["temp_c"] for p in pts if p.get("temp_c") is not None]
     return {
         "n": len(pts),
-        "n_activities": n_activities,
-        "a": fit[0] if fit_ok else None,
-        "b": fit[1] if fit_ok else None,
-        "fit_ok": fit_ok,
-        "fit_issue": issue,
-        "raw_b": fit[1] if fit else None,
-        "ratio": statistics.median(ratios) if ratios else None,
+        "n_activities": len({p.get("activity_id", i) for i, p in enumerate(pts)}),
+        "a": a, "b": b, "mad": mad,
+        "fit_ok": True, "fit_issue": None, "ratio": None, "raw_b": None,
         "hr_min": min(ys), "hr_max": max(ys),
         "out_min": min(xs), "out_max": max(xs),
-        "median_out": median_out,
+        "median_out": statistics.median(xs),
         "mean_temp_c": statistics.fmean(temps) if temps else None,
         "hot_points": sum(1 for t in temps if t > HEAT_DOWNWEIGHT_C),
     }
 
 
+def window_confidence(n: int, mad: Optional[float]) -> str:
+    if mad is None:
+        return "low"
+    if n >= CONF_HIGH[0] and mad <= CONF_HIGH[1]:
+        return "high"
+    if n >= CONF_MEDIUM[0] and mad <= CONF_MEDIUM[1]:
+        return "medium"
+    return "low"
+
+
 def window_headline(window: dict, hr_ref: float, ref_output: Optional[float]) -> dict:
-    """Output@HRref and HR@ref-output from a stored window fit, with a
-    confidence grade:
-      "high"   — trustworthy fit, >= MIN_POINTS_HIGH points, HRref inside
-                 the HR span seen;
-      "medium" — trustworthy fit but only 8-14 points, or HRref outside the
-                 HR span (extrapolated);
-      "low"    — no trustworthy fit (too few points, one session, narrow
-                 output range, implausible slope), or the fitted value lands
-                 more than MAX_EXTRAPOLATION beyond the outputs seen: the
-                 median output/HR ratio scaled to HRref is used instead."""
-    if not window or not window.get("n"):
+    """Output@HRref = (HRref - a_w) / b and HR@ref-output = a_w + b*ref from
+    a stored window, with confidence from its points and residual MAD."""
+    if not window or not window.get("n") or window.get("a") is None or not window.get("b"):
         return {"output_at_hr_ref": None, "hr_at_ref_output": None, "confidence": None}
-    if window.get("fit_ok"):
-        a, b = window["a"], window["b"]
-        value = (hr_ref - a) / b
-        inside = window["hr_min"] - 5 <= hr_ref <= window["hr_max"] + 5
-        plausible = (window["out_min"] * (1 - MAX_EXTRAPOLATION) <= value
-                     <= window["out_max"] * (1 + MAX_EXTRAPOLATION))
-        if plausible:
-            return {
-                "output_at_hr_ref": value,
-                "hr_at_ref_output": (a + b * ref_output) if ref_output else None,
-                "confidence": "high" if inside and window["n"] >= MIN_POINTS_HIGH else "medium",
-                "method": "regression",
-            }
-    ratio = window.get("ratio")
-    if not ratio:
-        return {"output_at_hr_ref": None, "hr_at_ref_output": None, "confidence": None}
+    a, b = window["a"], window["b"]
     return {
-        "output_at_hr_ref": ratio * hr_ref,
-        "hr_at_ref_output": (ref_output / ratio) if ref_output else None,
-        "confidence": "low",
-        "method": "ratio",
+        "output_at_hr_ref": (hr_ref - a) / b,
+        "hr_at_ref_output": (a + b * ref_output) if ref_output else None,
+        "confidence": window_confidence(window["n"], window.get("mad")),
+        "method": "shared_slope",
     }
 
 
@@ -855,8 +920,7 @@ def window_ends(first_day: date, today: date) -> list[date]:
     return out
 
 
-def weekly_windows(points: list[dict], today: date, heat_correction: bool = False,
-                   unit: Optional[str] = None) -> list[dict]:
+def weekly_windows(points: list[dict], today: date, b: float, heat_correction: bool = False) -> list[dict]:
     """Points need "date" (date) plus output/hr/temp_c. One fitted window
     per week end, covering the trailing WINDOW_DAYS days."""
     if not points:
@@ -866,7 +930,7 @@ def weekly_windows(points: list[dict], today: date, heat_correction: bool = Fals
     for end in window_ends(first, today):
         start = end - timedelta(days=WINDOW_DAYS - 1)
         inside = [p for p in points if start <= p["date"] <= end]
-        fitted = fit_window(inside, heat_correction=heat_correction, unit=unit)
+        fitted = fit_window(inside, b, heat_correction=heat_correction)
         if fitted:
             fitted["week_end"] = end.isoformat()
             out.append(fitted)

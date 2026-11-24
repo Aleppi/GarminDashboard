@@ -795,16 +795,6 @@
     return unit === 'W' ? 'Power' : (unit === 'm/min' ? 'Pace' : 'Metabolic power');
   }
 
-  // Why a week fell back to the output/HR ratio (low confidence).
-  const AE_FIT_ISSUES = {
-    too_few_points: 'fewer than 8 steady points',
-    one_session: 'all points from one session',
-    narrow_output_range: 'outputs too similar',
-    no_slope: 'HR didn\'t rise with output',
-    slope_out_of_range: 'HR~output slope implausible',
-    hr_not_tracking_output: 'HR barely tracked output',
-  };
-
   function aeBadge(conf) {
     return conf ? '<span class="ae-badge ' + conf + '">' + conf + '</span>' : '';
   }
@@ -1047,7 +1037,7 @@
       return '<b>' + escapeHtml(fmtAeOutput(w.output_at_hr_ref, unit)) + '</b> @ ' + s.hr_ref + ' bpm' +
         (typeof w.hr_at_ref_output === 'number' ? '<br>HR at ' + escapeHtml(fmtAeOutput(s.ref_output, unit)) + ': ' + w.hr_at_ref_output.toFixed(0) + ' bpm' : '') +
         '<br>' + w.n + ' pts · ' + escapeHtml(w.confidence || '') + ' confidence' +
-        (w.method === 'ratio' && AE_FIT_ISSUES[w.fit_issue] ? '<br>' + escapeHtml(AE_FIT_ISSUES[w.fit_issue]) + ', so avg output/HR used' : '') +
+        (typeof w.residual_mad_bpm === 'number' ? ' · scatter ±' + w.residual_mad_bpm.toFixed(1) + ' bpm' : '') +
         (typeof w.mean_temp_c === 'number' ? '<br>avg ' + w.mean_temp_c.toFixed(0) + ' °C' + (w.hot_points ? ' (' + w.hot_points + ' hot pts count half)' : '') : '') +
         '<span class="mc-tip-date">from sessions ' + escapeHtml(aeWindowRange(w.week_end)) + '</span>';
     });
@@ -1073,6 +1063,10 @@
     foot += '<div class="ae-dim">Type any ' + (unit === 'm/min' ? 'pace' : 'output') + ' to see your HR at it' +
       (s.ref_output_pinned ? '' : ' (default: your typical recent ' + (unit === 'm/min' ? 'pace' : 'output') + ')') + '. ' +
       'Lower HR at the same output, or more output at ' + s.hr_ref + ' bpm, means fitter. ' +
+      (s.slope ? 'HR rises ' + s.slope.b.toFixed(unit === 'W' ? 2 : (unit === 'W/kg' ? 1 : 2)) + ' ' + escapeHtml(s.slope.unit) +
+        (s.slope.source === 'fitted' ? ' (your ' + escapeHtml(s.sport) + ' data, 180 days)'
+          : s.slope.source === 'shrunk' ? ' (your data, blended with a typical value — still little data)'
+          : ' (typical value — not enough of your own data yet)') + '. ' : '') +
       (s.indoor ? 'Indoor sessions have no temperature, so heat isn\'t accounted for.'
                 : 'Outdoor points above 25 °C count half (heat raises HR).') +
       ' <span class="ae-key"><i class="ae-dot-k high"></i>high <i class="ae-dot-k medium"></i>medium <i class="ae-dot-k low"></i>low confidence</span></div>';

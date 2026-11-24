@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS weekly (
     out_min REAL, out_max REAL, median_out REAL, mean_temp_c REAL, hot_points INTEGER,
     PRIMARY KEY (username, series, week_end)
 );
+CREATE TABLE IF NOT EXISTS slope (
+    username TEXT NOT NULL, sport TEXT NOT NULL, unit TEXT, b REAL NOT NULL, source TEXT NOT NULL,
+    b_fitted REAL, default_b REAL, n INTEGER, n_activities INTEGER, n_pairs INTEGER, reason TEXT, updated_at REAL,
+    PRIMARY KEY (username, sport)
+);
 CREATE TABLE IF NOT EXISTS sync_state (
     username TEXT PRIMARY KEY, last_sync REAL, backfilled INTEGER NOT NULL DEFAULT 0, last_error TEXT
 );
@@ -67,7 +72,7 @@ _ADDED_COLUMNS = {
     "sessions": {"method": "TEXT", "n_chunks1": "INTEGER", "n_chunks2": "INTEGER", "ref_output": "REAL",
                  "hr1_at_ref": "REAL", "hr2_at_ref": "REAL", "np1": "REAL", "np2": "REAL",
                  "vi1": "REAL", "vi2": "REAL", "exclude_reason": "TEXT"},
-    "weekly": {"fit_issue": "TEXT", "raw_b": "REAL"},
+    "weekly": {"fit_issue": "TEXT", "raw_b": "REAL", "mad": "REAL"},
 }
 _migrated: set[str] = set()
 
@@ -243,7 +248,7 @@ def set_ref_output(username: str, series: str, value: Optional[float], pinned: b
 # ---------------------------------------------------------------- weekly --
 
 _WEEKLY_COLS = ("n", "n_activities", "a", "b", "fit_ok", "ratio", "hr_min", "hr_max", "out_min", "out_max",
-                "median_out", "mean_temp_c", "hot_points", "fit_issue", "raw_b")
+                "median_out", "mean_temp_c", "hot_points", "fit_issue", "raw_b", "mad")
 
 
 def replace_weekly(username: str, series: str, weeks: list[dict]) -> None:
@@ -270,6 +275,27 @@ def weekly(username: str, series: Optional[str] = None) -> list[dict]:
     return rows
 
 
+# ----------------------------------------------------------------- slope --
+
+def save_slope(username: str, sport: str, unit: str, fit: dict) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO slope (username, sport, unit, b, source, b_fitted, default_b, n, n_activities, n_pairs,
+               reason, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(username, sport) DO UPDATE SET unit = excluded.unit, b = excluded.b,
+               source = excluded.source, b_fitted = excluded.b_fitted, default_b = excluded.default_b,
+               n = excluded.n, n_activities = excluded.n_activities, n_pairs = excluded.n_pairs,
+               reason = excluded.reason, updated_at = excluded.updated_at""",
+            (username, sport, unit, fit["b"], fit["source"], fit.get("b_fitted"), fit.get("default"), fit.get("n"),
+             fit.get("n_activities"), fit.get("n_pairs"), fit.get("reason"), time.time()),
+        )
+        conn.commit()
+
+
+def get_slopes(username: str) -> dict[str, dict]:
+    return {r["sport"]: r for r in _rows("SELECT * FROM slope WHERE username = ?", (username,))}
+
+
 # ------------------------------------------------------------- sync state --
 
 def get_sync_state(username: str) -> Optional[dict]:
@@ -292,7 +318,7 @@ def save_sync_state(username: str, backfilled: Optional[bool] = None, error: Opt
 
 def clear(username: Optional[str] = None) -> None:
     with _connect() as conn:
-        for table in ("processed", "chunks", "sessions", "weekly", "sync_state"):
+        for table in ("processed", "chunks", "sessions", "weekly", "slope", "sync_state"):
             if username is None:
                 conn.execute(f"DELETE FROM {table}")
             else:

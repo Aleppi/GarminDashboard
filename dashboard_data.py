@@ -717,15 +717,34 @@ def _aerobic_series_weeks(rows: list[dict], hr_ref: float, ref_output: Optional[
             "output_at_hr_ref": head["output_at_hr_ref"],
             "hr_at_ref_output": head["hr_at_ref_output"],
             "confidence": head["confidence"],
-            # "regression" or "ratio" (the low-confidence fallback), and
-            # why the fit wasn't trusted when it wasn't.
+            # Shared-slope model: this window's intercept under the sport's
+            # slope; confidence from n and the median absolute residual.
             "method": head.get("method"),
-            "fit_issue": r.get("fit_issue"),
-            "slope_bpm_per_unit": _round_or_none(r.get("raw_b"), 3),
+            "fit_issue": None,
+            "intercept_bpm": _round_or_none(r.get("a"), 1),
+            "slope_bpm_per_unit": _round_or_none(r.get("b"), 3),
+            "residual_mad_bpm": _round_or_none(r.get("mad"), 1),
             "mean_temp_c": r.get("mean_temp_c"),
             "hot_points": r.get("hot_points"),
         })
     return weeks
+
+
+def _aerobic_slope(s: Optional[dict], unit: str) -> Optional[dict]:
+    """The sport's shared HR-vs-output slope b and where it came from:
+    "fitted" (Theil-Sen over 180 days), "shrunk" (toward the population
+    default, little data) or "default" (too little data / implausible fit)."""
+    if not s:
+        return None
+    return {
+        "b": round(s["b"], 4),
+        "unit": f"bpm per {'m/min' if unit == 'm/min' else unit}",
+        "source": s["source"],
+        "b_fitted": _round_or_none(s.get("b_fitted"), 4),
+        "default": s.get("default_b"),
+        "points": s.get("n"), "activities": s.get("n_activities"), "pairs": s.get("n_pairs"),
+        "reason": s.get("reason"),
+    }
 
 
 def _round_or_none(v: Optional[float], nd: int = 1) -> Optional[float]:
@@ -775,6 +794,7 @@ def build_aerobic_history(username: str, series: Optional[str] = None, include_c
 
     refs = store.get_refs(username)
     ref_outputs = store.get_ref_outputs(username)
+    slopes = store.get_slopes(username)
     weekly_rows = store.weekly(username, series)
     by_series: dict[str, list[dict]] = {}
     for r in weekly_rows:
@@ -823,6 +843,7 @@ def build_aerobic_history(username: str, series: Optional[str] = None, include_c
             "stale": stale,
             "change_6w": change,
             "weeks": week_list,
+            "slope": _aerobic_slope(slopes.get(meta["sport"]), meta["unit"]),
             "durability": [_durability_session(s) for s in sessions if s["series"] == key][:DURABILITY_SESSIONS],
             # Long sessions whose halves weren't comparable (no score).
             "durability_excluded": [_durability_session(s) for s in excluded if s["series"] == key][:DURABILITY_SESSIONS],
@@ -843,8 +864,8 @@ def build_aerobic_history(username: str, series: Optional[str] = None, include_c
         "heat_correction": _aerobic_heat_correction(),
         "series": out_series,
         "activities_processed": store.processed_summary(username),
-        "method": "docs/metrics.md — steady 5-min chunks in the aerobic HR band, robust HR~output fit over a "
-                  "rolling 28 days, evaluated weekly; durability = first-half vs second-half HR at a common "
+        "method": "docs/metrics.md — steady 5-min chunks in the aerobic HR band; one HR~output slope per "
+                  "sport (Theil-Sen, 180 days), intercept per series over a rolling 28 days, evaluated weekly; durability = first-half vs second-half HR at a common "
                   "output from per-half chunk regressions (NP/HR fallback) on sessions >= 90 min without intervals.",
     }
 
@@ -884,6 +905,9 @@ def build_aerobic(username: Optional[str]) -> Optional[dict]:
                 "confidence": latest["confidence"],
                 "method": latest.get("method"),
                 "fit_issue": latest.get("fit_issue"),
+                "slope_b": s["slope"] and s["slope"]["b"],
+                "slope_source": s["slope"] and s["slope"]["source"],
+                "residual_mad_bpm": latest.get("residual_mad_bpm"),
                 "n": latest["n"],
                 "as_of": latest["week_end"],
                 "stale": s["stale"],

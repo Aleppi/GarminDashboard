@@ -137,6 +137,27 @@ class SteadyChunks(unittest.TestCase):
         pts = am.analyze_activity(details(ride(2400, p, lambda i: 137)), "virtual_ride", ZONES)["series"]["bike_indoor"]["points"]
         self.assertEqual(pts, [])
 
+    def test_hr_oscillation_ok_but_trend_rejected(self):
+        # Rollers: HR swings +-8 bpm around a flat level (spread ~6 bpm) — steady.
+        osc = ride(3600, lambda i: 175, lambda i: 140 + 8 * math.sin(2 * math.pi * i / 90))
+        self.assertTrue(am.analyze_activity(details(osc), "virtual_ride", ZONES)["series"]["bike_indoor"]["points"])
+        # HR climbing 1.5 bpm/min at constant power: drifting, rejected.
+        ramp = ride(3600, lambda i: 175, lambda i: 125 + 1.5 * (i % 300) / 60)
+        res = am.analyze_activity(details(ramp), "virtual_ride", ZONES)["series"]["bike_indoor"]
+        self.assertEqual(res["points"], [])
+        self.assertGreater(res["reasons"].get("hr_drifting", 0), 0)
+        self.assertAlmostEqual(am.hr_trend_bpm_per_min([125 + 1.5 * i / 60 for i in range(300)]), 1.5, places=6)
+
+    def test_walking_hr_floor_is_30pct_of_reserve(self):
+        lo, hi = am.hr_band(199, 174, hr_rest=46, sport="walking")
+        self.assertAlmostEqual(lo, 46 + 0.30 * 153)
+        self.assertEqual(hi, 169.15)
+        self.assertEqual(am.hr_band(199, 174, hr_rest=46, sport="running")[0], 0.65 * 199)
+        self.assertEqual(am.hr_band(199, 174, sport="walking")[0], 0.50 * 199)  # no resting HR known
+        zones = dict(ZONES, DEFAULT={"hr_max": 199, "lthr": 174, "hr_rest": 46})
+        res = am.analyze_activity(details(run(3600, lambda i: 1.2, lambda i: 105, grade=0.08)), "hiking", zones)
+        self.assertTrue(res["series"]["walk_outdoor"]["points"])  # 105 bpm: below 65% HRmax, above the walking floor
+
     def test_outdoor_bike_chunk_vi_limit_1_10(self):
         # Rollers: 290/150 W in 50 s swings, chunk VI ~1.09 — steady enough
         # outdoors, not on the trainer.
@@ -247,101 +268,91 @@ class RunAndWalk(unittest.TestCase):
 
 
 class Model(unittest.TestCase):
-    def _points(self, relation, outputs, start=date(2026, 11, 1)):
-        return [{"date": start + timedelta(days=i % 20), "output": o, "hr": relation(o), "temp_c": None}
+    """Shared-slope model: one slope per sport (Theil-Sen, 180 days), one
+    intercept per series and 28-day window."""
+
+    def _points(self, relation, outputs, start=date(2026, 11, 1), series="bike_indoor", sessions=5):
+        return [{"date": start + timedelta(days=i % 20), "output": o, "hr": relation(o), "temp_c": None,
+                 "series": series, "activity_id": f"{series}-{i % sessions}", "t_start": i}
                 for i, o in enumerate(outputs)]
 
-    def test_linear_relation_recovers_output_at_hr_ref(self):
-        rel = lambda w: 60 + 0.44 * w  # noqa: E731
-        pts = self._points(rel, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155] * 2)
-        w = am.fit_window(pts, unit="W")
-        self.assertTrue(w["fit_ok"])
+    def test_theil_sen_recovers_slope(self):
+        pts = self._points(lambda w: 60 + 0.44 * w, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155] * 5)
+        fit = am.sport_slope(pts, "W", date(2026, 11, 24))
+        self.assertEqual(fit["source"], "fitted")
+        self.assertAlmostEqual(fit["b"], 0.44, places=6)
+
+    def test_theil_sen_robust_to_outliers(self):
+        pts = self._points(lambda w: 60 + 0.3 * w, [150, 160, 170, 180, 190, 200, 210, 220] * 6)
+        for p in pts[::7]:
+            p["hr"] += 25
+        self.assertAlmostEqual(am.sport_slope(pts, "W", date(2026, 11, 24))["b"], 0.3, delta=0.02)
+
+    def test_indoor_outdoor_offset_does_not_bias_slope(self):
+        # Outdoor HR runs 8 bpm higher at the same power: pairs stay within a
+        # series, so the pooled cycling slope is still 0.3.
+        indoor = self._points(lambda w: 80 + 0.3 * w, [150, 160, 170, 180, 190, 200] * 4, series="bike_indoor")
+        outdoor = self._points(lambda w: 88 + 0.3 * w, [210, 220, 230, 240, 250, 260] * 4, series="bike_outdoor")
+        self.assertAlmostEqual(am.sport_slope(indoor + outdoor, "W", date(2026, 11, 24))["b"], 0.3, places=6)
+
+    def test_little_data_shrinks_toward_default(self):
+        pts = self._points(lambda w: 60 + 0.5 * w, [150, 160, 170, 180, 190, 200, 210, 220, 165, 205])
+        fit = am.sport_slope(pts, "W", date(2026, 11, 24))
+        self.assertEqual(fit["source"], "shrunk")
+        w = 10 / am.SLOPE_FULL_POINTS
+        self.assertAlmostEqual(fit["b"], w * 0.5 + (1 - w) * am.DEFAULT_SLOPE["W"], places=6)
+
+    def test_implausible_slope_uses_default(self):
+        # b = 0.15 bpm/W (Nov 2026 outdoor rides alone): population default instead.
+        pts = self._points(lambda w: 112 + 0.15 * w, [165, 175, 185, 195, 205, 215, 225, 235, 245, 250] * 5)
+        fit = am.sport_slope(pts, "W", date(2026, 11, 24))
+        self.assertEqual((fit["source"], fit["reason"]), ("default", "fitted_slope_out_of_range"))
+        self.assertAlmostEqual(fit["b_fitted"], 0.15, places=6)
+        self.assertEqual(fit["b"], 0.30)
+
+    def test_too_little_data_uses_default(self):
+        pts = self._points(lambda w: 60 + 0.44 * w, [150, 170, 190])
+        fit = am.sport_slope(pts, "m/min", date(2026, 11, 24))
+        self.assertEqual((fit["b"], fit["source"]), (0.40, "default"))
+
+    def test_old_chunks_outside_180_days_ignored(self):
+        old = self._points(lambda w: 60 + 0.55 * w, [150, 170, 190, 210] * 20, start=date(2026, 1, 1))
+        new = self._points(lambda w: 60 + 0.25 * w, [150, 170, 190, 210] * 20)
+        self.assertAlmostEqual(am.sport_slope(old + new, "W", date(2026, 11, 24))["b"], 0.25, places=6)
+
+    def test_window_intercept_and_headline(self):
+        pts = self._points(lambda w: 60 + 0.44 * w, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155] * 2)
+        w = am.fit_window(pts, 0.44)
+        self.assertAlmostEqual(w["a"], 60, places=6)
+        self.assertAlmostEqual(w["mad"], 0, places=6)
         head = am.window_headline(w, hr_ref=140, ref_output=175)
         self.assertAlmostEqual(head["output_at_hr_ref"], (140 - 60) / 0.44, places=3)
-        self.assertAlmostEqual(head["hr_at_ref_output"], rel(175), places=3)
+        self.assertAlmostEqual(head["hr_at_ref_output"], 60 + 0.44 * 175, places=3)
         self.assertEqual(head["confidence"], "high")
-        self.assertEqual(head["method"], "regression")
+        self.assertEqual(head["method"], "shared_slope")
 
-    def test_8_to_14_points_is_medium(self):
-        pts = self._points(lambda w: 60 + 0.44 * w, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155])
-        w = am.fit_window(pts, unit="W")
-        self.assertTrue(w["fit_ok"])
-        self.assertEqual(am.window_headline(w, 140, 175)["confidence"], "medium")
-
-    def test_implausible_bike_slope_falls_back_to_ratio(self):
-        # b = 0.15 bpm/W (the Nov 2026 outdoor-bike case): HRref - a over b
-        # turns small HR errors into tens of watts. Low + median ratio.
-        pts = self._points(lambda w: 112 + 0.15 * w, [165, 175, 185, 195, 205, 215, 225, 235, 245, 250] * 2)
-        w = am.fit_window(pts, unit="W")
-        self.assertFalse(w["fit_ok"])
-        self.assertEqual(w["fit_issue"], "slope_out_of_range")
-        self.assertAlmostEqual(w["raw_b"], 0.15, places=6)
-        head = am.window_headline(w, 137, 200)
-        self.assertEqual(head["confidence"], "low")
-        self.assertEqual(head["method"], "ratio")
-        self.assertAlmostEqual(head["output_at_hr_ref"], w["ratio"] * 137)
-        # Too steep is just as implausible.
-        steep = self._points(lambda w: 20 + 0.8 * w, [150, 160, 170, 180, 190, 200, 210, 220] * 2)
-        self.assertEqual(am.fit_window(steep, unit="W")["fit_issue"], "slope_out_of_range")
-
-    def test_slope_bounds_per_unit(self):
-        # Running: ~8 bpm per km/h = 0.48 bpm per m/min is plausible...
-        run = self._points(lambda v: 50 + 0.48 * v, [160, 170, 180, 190, 200, 210, 165, 185] * 2)
-        self.assertTrue(am.fit_window(run, unit="m/min")["fit_ok"])
-        # ...but the same numbers read as bpm/W would be fine too, while a
-        # 0.1 bpm per m/min slope isn't.
-        flat = self._points(lambda v: 120 + 0.1 * v, [160, 170, 180, 190, 200, 210, 165, 185] * 2)
-        self.assertEqual(am.fit_window(flat, unit="m/min")["fit_issue"], "slope_out_of_range")
-        hike = self._points(lambda m: 60 + 8 * m, [5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 5.2, 6.8] * 2)
-        self.assertTrue(am.fit_window(hike, unit="W/kg")["fit_ok"])
-
-    def test_output_range_under_15_pct_is_low(self):
-        outs = [190, 195, 200, 205, 210, 192, 198, 202, 208, 196, 204, 200, 194, 206, 199, 201]  # 10% range
-        w = am.fit_window(self._points(lambda w: 60 + 0.4 * w, outs), unit="W")
-        self.assertEqual(w["fit_issue"], "narrow_output_range")
-        self.assertEqual(am.window_headline(w, 140, 200)["confidence"], "low")
-
-    def test_robust_to_outlier(self):
-        rel = lambda w: 60 + 0.44 * w  # noqa: E731
-        pts = self._points(rel, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155])
-        pts[3]["hr"] += 25
-        head = am.window_headline(am.fit_window(pts), 140, 175)
-        self.assertAlmostEqual(head["output_at_hr_ref"], (140 - 60) / 0.44, delta=2)
-
-    def test_narrow_range_falls_back_to_ratio(self):
+    def test_narrow_window_still_well_defined(self):
+        # All chunks at ~175 W: no per-window slope possible, but the
+        # intercept under the shared slope is exact and the value sane.
         pts = self._points(lambda w: 137, [174, 175, 176, 175, 174, 176, 175, 175])
-        w = am.fit_window(pts)
-        self.assertFalse(w["fit_ok"])
-        head = am.window_headline(w, 140, 175)
-        self.assertEqual(head["confidence"], "low")
-        self.assertAlmostEqual(head["hr_at_ref_output"], 137, delta=0.5)
+        head = am.window_headline(am.fit_window(pts, 0.3), 140, 175)
+        self.assertAlmostEqual(head["output_at_hr_ref"], 175 + 3 / 0.3, delta=0.5)
+        self.assertEqual(head["confidence"], "medium")  # 8 points
 
-    def test_too_few_points_low_confidence(self):
-        pts = self._points(lambda w: 60 + 0.44 * w, [150, 170, 190])
-        self.assertEqual(am.window_headline(am.fit_window(pts), 140, 175)["confidence"], "low")
+    def test_confidence_from_n_and_mad(self):
+        self.assertEqual(am.window_confidence(20, 2.0), "high")
+        self.assertEqual(am.window_confidence(20, am.CONF_HIGH[1] + 0.5), "medium")
+        self.assertEqual(am.window_confidence(10, 1.0), "medium")
+        self.assertEqual(am.window_confidence(20, am.CONF_MEDIUM[1] + 0.5), "low")
+        self.assertEqual(am.window_confidence(5, 1.0), "low")
 
-    def test_single_session_never_fits(self):
-        # Cardiac drift inside one ride is not an HR-output relationship.
-        pts = self._points(lambda w: 60 + 0.44 * w, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155])
-        for p in pts:
-            p["activity_id"] = "one"
-        w = am.fit_window(pts)
-        self.assertFalse(w["fit_ok"])
-        self.assertEqual(am.window_headline(w, 140, 175)["confidence"], "low")
-
-    def test_wild_extrapolation_falls_back(self):
-        w = {"n": 10, "fit_ok": True, "a": 140.0, "b": 0.06, "hr_min": 150, "hr_max": 165,
-             "out_min": 280, "out_max": 330, "ratio": 2.0}
-        head = am.window_headline(w, 120, 300)  # fit would say -333 W
-        self.assertEqual(head["confidence"], "low")
-        self.assertAlmostEqual(head["output_at_hr_ref"], 240)
-
-    def test_flat_slope_rejected(self):
-        # HR barely responds to output: solving for HRref would be unstable.
-        pts = self._points(lambda w: 144 + 0.011 * w, [280, 290, 300, 310, 320, 330, 340, 350, 285, 345])
-        w = am.fit_window(pts)
-        self.assertFalse(w["fit_ok"])
-        self.assertEqual(am.window_headline(w, 145, 300)["confidence"], "low")
+    def test_heat_weighted_intercept(self):
+        cool = self._points(lambda w: 60 + 0.3 * w, [200] * 10)
+        hot = self._points(lambda w: 70 + 0.3 * w, [200] * 8)
+        for p in hot:
+            p["temp_c"] = 30
+        # 10 cool at weight 1 vs 8 hot at 0.5: the median stays with the cool points.
+        self.assertAlmostEqual(am.fit_window(cool + hot, 0.3)["a"], 60, places=6)
 
     def test_heat_downweight_and_correction(self):
         self.assertEqual(am.heat_weight(30), 0.5)
@@ -352,6 +363,7 @@ class Model(unittest.TestCase):
 
     def test_reference_hr(self):
         self.assertEqual(am.reference_hr(50, 186), 138)
+        self.assertEqual(am.reference_hr(46, 199, "walking"), 107)  # 40% of HR reserve
 
     def test_weekly_windows_and_change(self):
         start = date(2026, 9, 1)
@@ -361,12 +373,12 @@ class Model(unittest.TestCase):
             gain = d * 0.3  # getting fitter: same HR, more watts
             for w in (150, 175, 200):
                 pts.append({"date": day, "output": w + gain, "hr": 60 + 0.44 * w, "temp_c": None})
-        weeks = am.weekly_windows(pts, start + timedelta(days=83))
+        weeks = am.weekly_windows(pts, start + timedelta(days=83), 0.44)
         for w in weeks:
             w.update(am.window_headline(w, 140, 175))
         ch = am.change_vs(weeks, "output_at_hr_ref")
         self.assertIsNotNone(ch)
-        self.assertGreater(ch["abs"], 10)  # ~0.3 W/day * 42 days
+        self.assertAlmostEqual(ch["abs"], 0.3 * 42, delta=1)
 
     def test_default_ref_output_rounding(self):
         self.assertEqual(am.default_ref_output([171, 176, 178], "W"), 175.0)
