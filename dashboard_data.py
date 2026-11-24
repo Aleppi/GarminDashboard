@@ -757,6 +757,10 @@ def _durability_session(s: dict) -> dict:
         if s.get("ref_output") is not None else None,
         "normalized_output": [am.format_output(s.get("np1"), unit), am.format_output(s.get("np2"), unit)]
         if s.get("np1") is not None else None,
+        "variability_index_per_half": [s.get("vi1"), s.get("vi2")] if s.get("vi1") is not None else None,
+        # Why an "excluded" session has no score: np_differs (> 10%) or
+        # vi_differs (> 0.05 between halves).
+        "exclude_reason": s.get("exclude_reason"),
     }
 
 
@@ -894,7 +898,8 @@ def build_aerobic(username: Optional[str]) -> Optional[dict]:
         if s["durability"]:
             durability.append({"series": s["series"], "label": s["label"], "indoor": s["indoor"],
                                "last": s["durability"][0], "sessions": s["durability"],
-                               "excluded": [{"date": x["date"], "name": x["name"], "method": "excluded"}
+                               "excluded": [{"date": x["date"], "name": x["name"], "method": "excluded",
+                                             "exclude_reason": x["exclude_reason"]}
                                             for x in s["durability_excluded"]]})
 
     # Lead with the series that has the freshest, best-supported data.

@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS sync_state (
 # add them to an existing database, so they're added here on connect.
 _ADDED_COLUMNS = {
     "sessions": {"method": "TEXT", "n_chunks1": "INTEGER", "n_chunks2": "INTEGER", "ref_output": "REAL",
-                 "hr1_at_ref": "REAL", "hr2_at_ref": "REAL", "np1": "REAL", "np2": "REAL"},
+                 "hr1_at_ref": "REAL", "hr2_at_ref": "REAL", "np1": "REAL", "np2": "REAL",
+                 "vi1": "REAL", "vi2": "REAL", "exclude_reason": "TEXT"},
     "weekly": {"fit_issue": "TEXT", "raw_b": "REAL"},
 }
 _migrated: set[str] = set()
@@ -132,12 +133,14 @@ def save_activity(username: str, activity_id: str, day: str, type_key: str, name
                 conn.execute(
                     """INSERT INTO sessions (username, activity_id, series, day, name, moving_s, vi, ef1, ef2,
                        output1, output2, hr1, hr2, decoupling_pct, label, temp_c,
-                       method, n_chunks1, n_chunks2, ref_output, hr1_at_ref, hr2_at_ref, np1, np2)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       method, n_chunks1, n_chunks2, ref_output, hr1_at_ref, hr2_at_ref, np1, np2,
+                       vi1, vi2, exclude_reason)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (username, aid, key, day, name, d["moving_s"], d["vi"], d.get("ef1"), d.get("ef2"), d["output1"],
                      d["output2"], d["hr1"], d["hr2"], d.get("decoupling_pct"), d.get("label"), temp,
                      d.get("method", "np_ef"), d.get("n_chunks1"), d.get("n_chunks2"), d.get("ref_output"),
-                     d.get("hr1_at_ref"), d.get("hr2_at_ref"), d.get("np1"), d.get("np2")),
+                     d.get("hr1_at_ref"), d.get("hr2_at_ref"), d.get("np1"), d.get("np2"),
+                     d.get("vi1"), d.get("vi2"), d.get("exclude_reason")),
                 )
         reason = analysis.get("skip_reason")
         if not reason and status == "no_steady_data":

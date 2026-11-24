@@ -25,8 +25,10 @@ from typing import Any, Iterable, Optional
 
 # Bump whenever a change below would alter cached results: the sync job
 # reprocesses every activity whose stored algo_version is older.
-ALGO_VERSION = 3  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
+ALGO_VERSION = 4  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
                   # 3: durability by per-half regression (NP-EF fallback), outdoor-bike VI 1.20
+                  # 4: outdoor-bike chunk VI 1.10, per-half VI check on NP-EF, ski touring
+                  #    (uphill only) and snowshoeing in walk_outdoor
 
 WARMUP_S = 600                 # dropped from the start of each activity (HR settling)
 CHUNK_S = 300                  # one data point per 5 min of steady effort
@@ -37,7 +39,10 @@ FILL_MAX_GAP_S = 10            # samples further apart than this = timer paused,
 HR_BAND_LO = 0.65              # aerobic band, fraction of HRmax...
 HR_BAND_HI = 0.85              # ...capped at LTHR when that's lower
 CHUNK_HR_STD_MAX = 5.0         # bpm; higher = HR still moving (a transition)
-CHUNK_VI_MAX = 1.05            # power: NP / avg power
+CHUNK_VI_MAX = 1.05            # power: NP / avg power (inclusive)
+# Outdoor loops with small rollers move power around even at a steady
+# effort; 1.05 left 0-4 chunks per half on every long outdoor ride.
+CHUNK_VI_MAX_BY_SERIES = {"bike_outdoor": 1.10}
 CHUNK_CV_MAX = 0.05            # speed-based: CV of the 30 s-smoothed output
 CHUNK_COVERAGE_MIN = 0.95      # share of seconds with both HR and output present
 SMOOTH_S = 30                  # rolling window for NP / CV
@@ -57,7 +62,9 @@ DURABILITY_VI_MAX = 1.10       # whole-session variability limit, inclusive (exc
 DURABILITY_VI_MAX_BY_SERIES = {"bike_outdoor": 1.20}
 DURABILITY_MIN_CHUNKS_PER_HALF = 4   # valid 5-min chunks needed in each half for the regression method
 DURABILITY_OVERLAP_TOL = 0.02        # halves' chunk output ranges may miss each other by 2% of the median
-DURABILITY_NP_MAX_DIFF = 0.10        # NP-EF fallback only when the halves' NP differ by <= 10%
+DURABILITY_NP_MAX_DIFF = 0.10        # NP-EF fallback only when the halves' NP differ by <= 10%...
+DURABILITY_HALF_VI_MAX_DIFF = 0.05   # ...and their VIs by <= 0.05: a surgier half inflates its NP
+UPHILL_MIN_GRADE = 0.05              # ski touring: only seconds climbing steeper than +5% count
 MOVING_SPEED = 1.0             # m/s; a coasting rider (zero power) is still moving
 DURABILITY_COVERAGE_MIN = 0.90
 WINDOW_DAYS = 28
@@ -128,9 +135,16 @@ CYCLING_INDOOR_TYPES = {"virtual_ride", "indoor_cycling"}
 RUN_OUTDOOR_TYPES = {"running", "trail_running", "track_running", "street_running", "ultra_run", "obstacle_run"}
 RUN_INDOOR_TYPES = {"treadmill_running", "indoor_running", "virtual_run"}
 WALK_OUTDOOR_TYPES = {
-    "walking", "casual_walking", "speed_walking", "hiking", "rucking", "mountaineering",
-    "backcountry_skiing", "backcountry_skiing_snowboarding_ws",
+    "walking", "casual_walking", "speed_walking", "hiking", "rucking", "mountaineering", "snow_shoe_ws",
+    "backcountry_skiing", "backcountry_snowboarding", "backcountry_skiing_snowboarding_ws",
 }
+# Ski touring / splitboarding: the climbs are walking-like effort, the
+# descents are gravity. Only uphill seconds (UPHILL_MIN_GRADE) count, and
+# there's no Durability (half the moving time is descending).
+UPHILL_ONLY_TYPES = {"backcountry_skiing", "backcountry_snowboarding", "backcountry_skiing_snowboarding_ws"}
+# Walking metabolic power needs the terrain: without GPS distance and
+# altitude it's just speed.
+GPS_ALT_MIN_COVERAGE = 0.5
 WALK_INDOOR_TYPES = {"treadmill_walking", "indoor_walking"}
 
 
@@ -309,8 +323,10 @@ def gradients(dist: list[Optional[float]], alt: list[Optional[float]]) -> list[f
 
 # ----------------------------------------------------------------- output --
 
-def output_signal(grid: Grid, series: str) -> list[Optional[float]]:
-    """Per-second output in the series' unit."""
+def output_signal(grid: Grid, series: str, uphill_only: bool = False) -> list[Optional[float]]:
+    """Per-second output in the series' unit. `uphill_only` (ski touring)
+    blanks every second not climbing steeper than UPHILL_MIN_GRADE, so a
+    chunk containing descent fails the coverage check."""
     signal = SERIES[series]["signal"]
     if signal == "power":
         return list(grid.power)
@@ -321,7 +337,8 @@ def output_signal(grid: Grid, series: str) -> list[Optional[float]]:
         return [s * 60 * minetti_run_cost(g) / RUN_COST_FLAT if s is not None else None
                 for s, g in zip(grid.speed, grade)]
     if signal == "walk_metab":
-        return [minetti_walk_cost(g) * s if s is not None else None for s, g in zip(grid.speed, grade)]
+        return [minetti_walk_cost(g) * s if s is not None and (not uphill_only or g > UPHILL_MIN_GRADE) else None
+                for s, g in zip(grid.speed, grade)]
     raise ValueError(signal)
 
 
@@ -416,7 +433,7 @@ def _filled(values: list[Optional[float]]) -> list[float]:
 
 
 def evaluate_chunk(hr: list[Optional[float]], out: list[Optional[float]], signal: str,
-                   band: tuple[float, float]) -> tuple[Optional[dict], str]:
+                   band: tuple[float, float], vi_max: float = CHUNK_VI_MAX) -> tuple[Optional[dict], str]:
     """(point, "ok") for a steady aerobic chunk, else (None, reason)."""
     n = len(hr)
     both = [(h, o) for h, o in zip(hr, out) if h is not None and o is not None]
@@ -434,7 +451,7 @@ def evaluate_chunk(hr: list[Optional[float]], out: list[Optional[float]], signal
         return None, "hr_unstable"
     if signal == "power":
         vi = variability_index(outs)
-        if vi is None or vi >= CHUNK_VI_MAX:
+        if vi is None or vi > vi_max:
             return None, "variable_output"
     else:
         cv = smoothed_cv(outs)
@@ -453,6 +470,7 @@ def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
     idx, breaks = idx[WARMUP_S:], breaks[WARMUP_S:]
     band = hr_band(hr_max, lthr)
     signal = SERIES[series]["signal"]
+    vi_max = CHUNK_VI_MAX_BY_SERIES.get(series, CHUNK_VI_MAX)
 
     segments: list[list[int]] = []
     for p, i in enumerate(idx):
@@ -466,7 +484,7 @@ def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
         run: list[dict] = []
         for c in range(len(seg) // CHUNK_S):
             sl = seg[c * CHUNK_S:(c + 1) * CHUNK_S]
-            point, reason = evaluate_chunk([grid.hr[i] for i in sl], [out[i] for i in sl], signal, band)
+            point, reason = evaluate_chunk([grid.hr[i] for i in sl], [out[i] for i in sl], signal, band, vi_max)
             reasons[reason] = reasons.get(reason, 0) + 1
             if point is not None:
                 point["t_start"] = grid.t[sl[0]]
@@ -541,7 +559,8 @@ def durability(grid: Grid, series: str, out: Optional[list[Optional[float]]] = N
         overlap): decoupling = (HR2 - HR1) / HR2, i.e. the drop in
         output-per-heartbeat at the same output — a like-for-like Pa:HR.
       "np_ef" (fallback): EF = NP / mean HR per half (mean GAS / metabolic
-        power for speed-based sports), only if the halves' NP differ by <= 10%.
+        power for speed-based sports), only if the halves' NP differ by <= 10%
+        and their VIs (NP / mean, per half) by <= 0.05.
       "excluded": neither is possible — the halves aren't comparable; stored
         with decoupling None.
     Returns (result, "ok"), (excluded result, "not_comparable"), or
@@ -580,11 +599,14 @@ def durability(grid: Grid, series: str, out: Optional[list[Optional[float]]] = N
 
     out1, hr1, np1 = means(0, half)
     out2, hr2, np2 = means(half, len(idx))
+    vi1 = variability_index(outs_all[:half])
+    vi2 = variability_index(outs_all[half:])
     if not hr1 or not hr2 or not out1 or not out2:
         return None, "missing_data"
 
     result: dict[str, Any] = {
         "moving_s": moving_s, "vi": round(vi, 3),
+        "vi1": round(vi1, 3) if vi1 else None, "vi2": round(vi2, 3) if vi2 else None, "exclude_reason": None,
         "output1": out1, "output2": out2, "hr1": hr1, "hr2": hr2, "np1": np1, "np2": np2,
         "n_chunks1": 0, "n_chunks2": 0, "ref_output": None, "hr1_at_ref": None, "hr2_at_ref": None,
         "ef1": None, "ef2": None, "decoupling_pct": None, "label": None, "method": "excluded",
@@ -612,8 +634,14 @@ def durability(grid: Grid, series: str, out: Optional[list[Optional[float]]] = N
                 result.update(method="regression", ref_output=ref, hr1_at_ref=h1, hr2_at_ref=h2,
                               ef1=ref / h1, ef2=ref / h2)
 
-    if result["method"] == "excluded" and np1 and np2:
-        if abs(np2 - np1) / np1 <= DURABILITY_NP_MAX_DIFF:
+    if result["method"] == "excluded":
+        # NP rewards surges, so NP-EF is only like-for-like when both halves
+        # were ridden at a similar level AND with similar variability.
+        if not (np1 and np2) or abs(np2 - np1) / np1 > DURABILITY_NP_MAX_DIFF:
+            result["exclude_reason"] = "np_differs"
+        elif vi1 is None or vi2 is None or abs(vi2 - vi1) > DURABILITY_HALF_VI_MAX_DIFF:
+            result["exclude_reason"] = "vi_differs"
+        else:
             result.update(method="np_ef", ef1=np1 / hr1, ef2=np2 / hr2)
 
     if result["method"] == "excluded":
@@ -639,15 +667,24 @@ def analyze_activity(details: dict, type_key: str, zones: dict[str, dict], inter
     series_keys, reason = classify_activity(type_key, has_power_stream(grid))
     if not series_keys:
         return {"series": {}, "skip_reason": reason}
+    uphill_only = (type_key or "").lower() in UPHILL_ONLY_TYPES
+    if "walk_outdoor" in series_keys:
+        n = len(grid)
+        if (sum(1 for d in grid.dist if d is not None) < GPS_ALT_MIN_COVERAGE * n
+                or sum(1 for a in grid.alt if a is not None) < GPS_ALT_MIN_COVERAGE * n):
+            return {"series": {}, "skip_reason": "no_gps_altitude"}
     result: dict[str, Any] = {"series": {}, "skip_reason": None}
     for key in series_keys:
         z = zones.get(ZONE_SPORT[SERIES[key]["sport"]]) or zones.get("DEFAULT") or {}
         if not z.get("hr_max"):
             result["series"][key] = {"points": [], "durability": None, "durability_reason": "no_hr_max", "reasons": {}}
             continue
-        out = output_signal(grid, key)
+        out = output_signal(grid, key, uphill_only=uphill_only)
         points, reasons = steady_chunks(grid, key, z["hr_max"], z.get("lthr"), out=out)
-        dur, dur_reason = durability(grid, key, out=out, interval_session=interval_session, points=points)
+        if uphill_only:
+            dur, dur_reason = None, "uphill_only"
+        else:
+            dur, dur_reason = durability(grid, key, out=out, interval_session=interval_session, points=points)
         result["series"][key] = {"points": points, "durability": dur, "durability_reason": dur_reason, "reasons": reasons}
     return result
 

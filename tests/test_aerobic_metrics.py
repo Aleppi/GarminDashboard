@@ -137,6 +137,16 @@ class SteadyChunks(unittest.TestCase):
         pts = am.analyze_activity(details(ride(2400, p, lambda i: 137)), "virtual_ride", ZONES)["series"]["bike_indoor"]["points"]
         self.assertEqual(pts, [])
 
+    def test_outdoor_bike_chunk_vi_limit_1_10(self):
+        # Rollers: 290/150 W in 50 s swings, chunk VI ~1.09 — steady enough
+        # outdoors, not on the trainer.
+        def p(i):
+            return 290 if (i % 100) < 50 else 150
+        self.assertTrue(1.05 < am.variability_index([p(i) for i in range(600, 900)]) <= 1.10)
+        samples = ride(3600, p, lambda i: 140)
+        self.assertTrue(am.analyze_activity(details(samples), "road_biking", ZONES)["series"]["bike_outdoor"]["points"])
+        self.assertEqual(am.analyze_activity(details(samples), "virtual_ride", ZONES)["series"]["bike_indoor"]["points"], [])
+
     def test_missing_hr_rejected(self):
         pts = am.analyze_activity(details(ride(3600, lambda i: 175, lambda i: None if i % 10 == 0 and i > 600 else 137)),
                                   "virtual_ride", ZONES)["series"]["bike_indoor"]["points"]
@@ -185,6 +195,45 @@ class RunAndWalk(unittest.TestCase):
         pts = res["series"]["walk_outdoor"]["points"]
         self.assertTrue(pts)
         self.assertAlmostEqual(pts[0]["output"], am.minetti_walk_cost(0.10) * 1.2, delta=0.05)
+
+    def test_snowshoe_and_touring_types_map_to_walk(self):
+        for t in ("hiking", "mountaineering", "snow_shoe_ws", "backcountry_skiing", "backcountry_snowboarding",
+                  "backcountry_skiing_snowboarding_ws"):
+            self.assertEqual(am.classify_activity(t, False), (["walk_outdoor"], None), t)
+
+    def test_walk_needs_gps_and_altitude(self):
+        samples = run(3600, lambda i: 1.2, lambda i: 140, grade=0.10)
+        for x in samples:
+            x["alt"] = None
+        res = am.analyze_activity(details(samples), "hiking", ZONES)
+        self.assertEqual(res["skip_reason"], "no_gps_altitude")
+
+    def _tour(self, climb_grade):
+        # 50 min climbing at 1.0 m/s, then 25 min descending at 4 m/s, then 30 more min climbing.
+        out, d, alt = [], 0.0, 1000.0
+        for i in range(6300):
+            up = i < 3000 or i >= 4500
+            v = 1.0 if up else 4.0
+            out.append({"t": T0 + i, "hr": 140 if up else 125, "power": None, "speed": v, "dist": d, "alt": alt})
+            d += v
+            alt += v * (climb_grade if up else -0.25)
+        return out
+
+    def test_ski_touring_counts_only_climbs(self):
+        res = am.analyze_activity(details(self._tour(0.12)), "backcountry_skiing", ZONES)
+        s = res["series"]["walk_outdoor"]
+        self.assertEqual(s["durability_reason"], "uphill_only")
+        self.assertTrue(s["points"])
+        for p in s["points"]:
+            self.assertTrue(T0 + 600 <= p["t_start"] < T0 + 3000 - 299 or p["t_start"] >= T0 + 4500, p["t_start"])
+            self.assertAlmostEqual(p["output"], am.minetti_walk_cost(0.12) * 1.0, delta=0.1)
+
+    def test_ski_touring_gentle_climb_not_uphill_enough(self):
+        res = am.analyze_activity(details(self._tour(0.03)), "backcountry_skiing", ZONES)
+        self.assertEqual(res["series"]["walk_outdoor"]["points"], [])
+        # The same terrain on foot isn't restricted to climbs.
+        res = am.analyze_activity(details(self._tour(0.03)), "hiking", ZONES)
+        self.assertTrue(res["series"]["walk_outdoor"]["points"])
 
     def test_treadmill_run_uses_raw_speed(self):
         res = am.analyze_activity(details(run(3600, lambda i: 3.0, lambda i: 145, grade=0.05)), "treadmill_running", ZONES)
@@ -367,6 +416,21 @@ class Durability(unittest.TestCase):
         self.assertEqual(d["n_chunks1"], 0)
         self.assertAlmostEqual(d["decoupling_pct"], (1 - 168 / 172) * 100, places=2)
 
+    def test_np_fallback_needs_similar_variability(self):
+        # Steady 230 W, then 300/150 W surges: NP within 10% (230 -> 248) but
+        # VI 1.00 vs 1.09, so NP-EF would compare unlike halves.
+        half_i = 600 + (7200 - 600) // 2
+        def p(i):
+            if i < half_i:
+                return 230
+            return 300 if (i % 120) < 60 else 150
+        res = am.analyze_activity(details(ride(7200, p, lambda i: 168)), "virtual_ride", ZONES)
+        d = res["series"]["bike_indoor"]["durability"]
+        self.assertEqual(res["series"]["bike_indoor"]["durability_reason"], "not_comparable")
+        self.assertEqual(d["exclude_reason"], "vi_differs")
+        self.assertLess(abs(d["np2"] - d["np1"]) / d["np1"], 0.10)
+        self.assertGreater(d["vi2"] - d["vi1"], 0.05)
+
     def test_halves_not_comparable_excluded(self):
         # 150 W then 200 W: chunk ranges don't overlap and NP differs by 33%.
         half_i = 600 + (7200 - 600) // 2
@@ -375,6 +439,7 @@ class Durability(unittest.TestCase):
         s = res["series"]["bike_indoor"]
         self.assertEqual(s["durability_reason"], "not_comparable")
         self.assertEqual(s["durability"]["method"], "excluded")
+        self.assertEqual(s["durability"]["exclude_reason"], "np_differs")
         self.assertIsNone(s["durability"]["decoupling_pct"])
 
     def test_short_session_not_eligible(self):

@@ -23,9 +23,22 @@ Both need heart rate. Activities without HR are skipped.
 | Cycling **without** power | *excluded*: bike speed depends on wind, drafting and terrain | — | — |
 | Running, outdoor | Grade-adjusted speed (GAS), Minetti | m/min, shown as pace | `run_outdoor` |
 | Treadmill / indoor run | Speed at grade 0 (Garmin stores no incline) | m/min | `run_indoor` |
-| Walking, hiking, ski touring (outdoor) | Metabolic power, Minetti | W/kg | `walk_outdoor` |
+| Walking, hiking, mountaineering, snowshoeing (outdoor, GPS + altitude) | Metabolic power, Minetti | W/kg | `walk_outdoor` |
+| Ski touring / splitboarding (`backcountry_skiing`, `backcountry_snowboarding`) | Metabolic power, Minetti, **climbs only** (gradient > +5 %) | W/kg | `walk_outdoor` |
 | Treadmill walking | *excluded*: incline isn't recorded, and walking cost depends on it heavily | — | — |
 | Running power | *not used*: usually Garmin's wrist estimate rather than a measurement; pace covers runs | — | — |
+
+For walking-type activities without a GPS distance or altitude stream
+(< 50 % of the time), we skip the activity as `no_gps_altitude`. Without
+terrain, metabolic power is only speed.
+
+Ski touring: every second not climbing steeper than +5 % is blanked, so a
+chunk that contains descent, or a flat stretch, fails the 95 % coverage
+rule. Only sustained climbs become points. Ski tours have no Durability,
+because half their moving time is descending. Skinning on snow costs more
+than Minetti's walking model predicts, so ski-tour points read as more
+output-per-beat than they are. They're kept in `walk_outdoor`, as asked;
+treat mixed hike/tour windows with care.
 
 Indoor and outdoor are always **separate series**. Indoors there's no wind or
 weather heat, and trainer/treadmill speed is measured differently from GPS.
@@ -66,8 +79,10 @@ For each activity and series:
    - mean HR is in the **aerobic band**: 65 % to 85 % of HRmax, capped at LTHR
      when that's lower
    - HR standard deviation < 5 bpm (not catching a transition)
-   - low variability: **power** VI = NP ÷ average < 1.05 (NP from 30 s
-     rolling power); **speed-based** CV of the 30 s rolling output < 5 %
+   - low variability: **power** VI = NP ÷ average ≤ 1.05 indoors, **≤ 1.10
+     for outdoor rides**, where rollers move power around at a steady effort
+     (NP from 30 s rolling power); **speed-based** CV of the 30 s rolling
+     output < 5 %
 6. Only runs of **≥ 2 consecutive valid chunks** (≥ 10 min steady) count.
    Each valid chunk becomes one point: (mean output, mean HR, date,
    temperature for outdoor activities).
@@ -160,8 +175,8 @@ over the last 120 days stands in for HRmax.
 | Method | When | How |
 |---|---|---|
 | `regression` (primary) | ≥ **4 valid 5-min chunks** in each half (the same filters as Aerobic Efficiency: aerobic HR band, steady HR, VI < 1.05 / CV < 5 %, ≥ 2 in a row), and the halves' chunk output ranges overlap (within 2 % of the median) | Fit HR = a + b·output on each half's chunks. Read both fits at a **common reference output**, the middle of the overlap. Decoupling % = (HR₂ − HR₁) / HR₂ × 100, the drop in output per heartbeat at the same output. Within one session the output range can be tiny (ERG), so each half's slope is clamped to 0…the plausible maximum and re-centred on that half's mean. The reading then always stays inside the data. |
-| `np_ef` (fallback) | too few chunks or no overlap, and the halves' **NP differ by ≤ 10 %** | EF = NP ÷ mean HR per half. Runs and hikes use mean GAS / metabolic power, which already account for terrain. Decoupling % = (EF₁ − EF₂) / EF₁ × 100. |
-| `excluded` | neither | Output changed too much between the halves to compare. Stored with no score and listed separately (`durability_excluded`). |
+| `np_ef` (fallback) | too few chunks or no overlap, the halves' **NP differ by ≤ 10 %**, and their **VIs (NP ÷ avg per half) differ by ≤ 0.05**. NP rewards surges, so a surgier second half inflates its NP and hides HR drift. | EF = NP ÷ mean HR per half. Runs and hikes use mean GAS / metabolic power, which already account for terrain. Decoupling % = (EF₁ − EF₂) / EF₁ × 100. |
+| `excluded` | neither | The halves can't be compared. Stored with no score, with `exclude_reason` `np_differs` or `vi_differs`, and listed separately (`durability_excluded`). |
 
 - **< 5 %** strong · **5–8 %** moderate · **> 8 %** low.
 - Why regression first: a plain first-half vs second-half output/HR compares

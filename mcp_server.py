@@ -442,8 +442,9 @@ def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bo
     half's steady chunks (>= 4 per half, overlapping output ranges) and read
     at a common reference output; decoupling_pct = rise in HR there, as a
     drop in output per heartbeat. method "np_ef": NP / mean HR per half when
-    the halves' NP differ by <= 10%. Otherwise the session is listed under
-    durability_excluded with no score. < 5% strong, 5-8% moderate, > 8% low.
+    the halves' NP differ by <= 10% and their VIs by <= 0.05. Otherwise the
+    session is listed under durability_excluded with no score
+    (exclude_reason np_differs / vi_differs). < 5% strong, 5-8% moderate, > 8% low.
 
     Args:
         series: one of bike_indoor, bike_outdoor, run_outdoor, run_indoor,
