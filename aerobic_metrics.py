@@ -80,19 +80,28 @@ MOVING_SPEED = 1.0             # m/s; a coasting rider (zero power) is still mov
 DURABILITY_COVERAGE_MIN = 0.90
 WINDOW_DAYS = 28
 # Shared-slope model: one HR-vs-output slope b per user and sport (cycling
-# pools indoor + outdoor; running; walking), Theil-Sen over the trailing
-# SLOPE_DAYS of chunks. Each series' weekly window then only estimates its
-# intercept, a_w = median(HR - b*output). A slope fitted per 28-day window
-# rests on a handful of sessions and swung the outdoor value 155 <-> 210 W.
+# pools indoor + outdoor; running; walking) and, per series and 28-day
+# window, only an intercept a_w = median(HR - b*output). A slope fitted per
+# window rests on a handful of sessions and swung the outdoor value
+# 155 <-> 210 W.
+# The slope is a WITHIN-session estimate, first-difference form: Theil-Sen
+# over pairs of chunks from the same activity that start <= 20 min apart.
+# Comparing chunks across sessions mixes in heat, fatigue, day form and the
+# indoor/outdoor offset (the pooled fit gave 0.235 bpm/W). Demeaning each
+# activity removes those but not cardiac drift *within* a long session:
+# 2.5 h at a constant 154 W with HR drifting 124 -> 137 then a cool-down
+# gave that ride a slope of -0.11 and, with 30 chunks, dragged the
+# estimate to 0.21. Over <= 20 min drift is ~1 bpm, so time-local pairs
+# measure HR's response to output, not to time.
 SLOPE_DAYS = 180
-SLOPE_PAIR_MAX_DAYS = 28       # pairs only between chunks of one series <= 28 days apart: fitness and
-                               # the indoor/outdoor offset move the intercept, not the slope
-SLOPE_PAIR_MIN_DOUT = 0.05     # pairs need |delta output| >= 5% of the median output (else the ratio is noise)
-SLOPE_MIN_POINTS = 8           # fewer, or fewer than SLOPE_MIN_ACTIVITIES: population default
+SLOPE_ACTIVITY_MIN_CHUNKS = 3   # an activity contributes only with >= 3 valid chunks...
+SLOPE_ACTIVITY_MIN_RANGE = 0.15 # ...spanning >= 15% of its median output
+SLOPE_PAIR_MIN_DOUT = 0.05     # pairs need |delta output| >= 5% of the activity's median output (else noise)
+SLOPE_PAIR_MAX_GAP_S = 20 * 60 # pairs only between chunks starting <= 20 min apart (drift ~1 bpm)
+SLOPE_MIN_POINTS = 8           # pairs; fewer, or fewer than SLOPE_MIN_ACTIVITIES contributing: population default
 SLOPE_MIN_ACTIVITIES = 2
-SLOPE_MIN_PAIRS = 20
-SLOPE_FULL_POINTS = 40         # from here the fitted slope is used as-is; below, shrunk toward the default
-SLOPE_MAX_POINTS = 800         # Theil-Sen is O(n^2) pairs: thin (evenly) beyond this
+SLOPE_MIN_PAIRS = 8
+SLOPE_FULL_POINTS = 40         # pairs; from here the fitted slope is used as-is, below shrunk toward the default
 DEFAULT_SLOPE = {"W": 0.30, "m/min": 0.40, "W/kg": 6.0}
 # Confidence from the window's own data: points and the median absolute
 # residual (bpm) around the shared-slope line.
@@ -826,49 +835,55 @@ def huber_fit(xs: list[float], ys: list[float], ws: Optional[list[float]] = None
     return fit
 
 
-def theil_sen(points: list[dict]) -> tuple[Optional[float], int]:
-    """Median pairwise slope dHR/doutput over the allowed pairs (same series,
-    <= SLOPE_PAIR_MAX_DAYS apart, output differing by >= SLOPE_PAIR_MIN_DOUT
-    of the median). Returns (slope or None, number of pairs)."""
-    pts = sorted(points, key=lambda p: (p["date"], p.get("t_start", 0)))
-    if len(pts) > SLOPE_MAX_POINTS:
-        step = len(pts) / SLOPE_MAX_POINTS
-        pts = [pts[int(i * step)] for i in range(SLOPE_MAX_POINTS)]
-    if len(pts) < 2:
-        return None, 0
-    min_dx = SLOPE_PAIR_MIN_DOUT * statistics.median(p["output"] for p in pts)
-    slopes = []
-    for i, p in enumerate(pts):
-        for q in pts[i + 1:]:
-            if (q["date"] - p["date"]).days > SLOPE_PAIR_MAX_DAYS:
-                break
-            if q.get("series") != p.get("series"):
-                continue
-            dx = q["output"] - p["output"]
-            if abs(dx) >= min_dx:
-                slopes.append((q["hr"] - p["hr"]) / dx)
-    return (statistics.median(slopes) if slopes else None), len(slopes)
+def within_session_slopes(points: list[dict]) -> tuple[list[float], int]:
+    """Pairwise slopes dHR/doutput between chunks of the same qualifying
+    activity (>= 3 chunks spanning >= 15% of its median output) that start
+    <= SLOPE_PAIR_MAX_GAP_S apart and differ in output by >= 5% of its
+    median. An activity's weight grows with its chunks (more pairs).
+    Returns (slopes, number of activities that contributed)."""
+    by_act: dict[Any, list[dict]] = {}
+    for p in points:
+        by_act.setdefault(p.get("activity_id"), []).append(p)
+    slopes: list[float] = []
+    n_act = 0
+    for pts in by_act.values():
+        outs = [p["output"] for p in pts]
+        med = statistics.median(outs)
+        if len(pts) < SLOPE_ACTIVITY_MIN_CHUNKS or not med or (max(outs) - min(outs)) / med < SLOPE_ACTIVITY_MIN_RANGE:
+            continue
+        pts = sorted(pts, key=lambda p: p.get("t_start", 0))
+        before = len(slopes)
+        for i, p in enumerate(pts):
+            for q in pts[i + 1:]:
+                if q.get("t_start", 0) - p.get("t_start", 0) > SLOPE_PAIR_MAX_GAP_S:
+                    break
+                dx = q["output"] - p["output"]
+                if abs(dx) >= SLOPE_PAIR_MIN_DOUT * med:
+                    slopes.append((q["hr"] - p["hr"]) / dx)
+        n_act += len(slopes) > before
+    return slopes, n_act
 
 
 def sport_slope(points: list[dict], unit: str, today: date) -> dict:
-    """One HR-vs-output slope for a user's sport, from every valid chunk
-    (all its series) in the trailing SLOPE_DAYS. Points need date, output,
-    hr, series, activity_id.
+    """One HR-vs-output slope for a user's sport, from the within-session
+    variation of its valid chunks (all its series) in the trailing
+    SLOPE_DAYS. Points need date, output, hr, activity_id.
 
-    source "fitted": Theil-Sen slope, plausible, >= SLOPE_FULL_POINTS points.
-    source "shrunk": plausible but fewer points: weighted toward the default
-                     by n / SLOPE_FULL_POINTS.
-    source "default": too little data, or the fit is implausible
-                      (SLOPE_BOUNDS) — the population default is used."""
+    source "fitted": within-session Theil-Sen, plausible, >= SLOPE_FULL_POINTS pairs.
+    source "shrunk": plausible but fewer pairs: weighted toward the default
+                     by n_pairs / SLOPE_FULL_POINTS.
+    source "default": too little within-session data, or the fit is
+                      implausible (SLOPE_BOUNDS) — the population default."""
     since = today - timedelta(days=SLOPE_DAYS)
     pts = [p for p in points if p.get("output") and p.get("hr") and p["date"] >= since]
+    slopes, n_act = within_session_slopes(pts)
+    n_pairs = len(slopes)
+    fitted = statistics.median(slopes) if slopes else None
+    n = n_pairs  # the evidence is the pairs; SLOPE_MIN_POINTS / SLOPE_FULL_POINTS count them
     default = DEFAULT_SLOPE[unit]
-    n = len(pts)
-    n_act = len({p.get("activity_id") for p in pts})
-    fitted, n_pairs = theil_sen(pts) if n >= 2 else (None, 0)
     lo, hi = SLOPE_BOUNDS[unit]
     out = {"b": default, "source": "default", "b_fitted": fitted, "n": n, "n_activities": n_act,
-           "n_pairs": n_pairs, "default": default, "reason": None}
+           "n_pairs": n_pairs, "default": default, "reason": None, "method": "within_session_first_difference_theil_sen"}
     if n < SLOPE_MIN_POINTS or n_act < SLOPE_MIN_ACTIVITIES or n_pairs < SLOPE_MIN_PAIRS or fitted is None:
         out["reason"] = "too_little_data"
     elif not lo <= fitted <= hi:

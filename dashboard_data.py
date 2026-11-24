@@ -730,6 +730,22 @@ def _aerobic_series_weeks(rows: list[dict], hr_ref: float, ref_output: Optional[
     return weeks
 
 
+def _hr_ref_rule(ref: dict, sport: str) -> Optional[str]:
+    """How this sport's reference HR was set, spelled out with the numbers."""
+    import aerobic_metrics as am
+
+    if not ref.get("hr_ref"):
+        return None
+    if ref.get("hr_ref_source") == "easy_sessions":
+        return (f"your typical easy-session HR: median of {ref.get('easy_activities')} sessions' steady HR "
+                f"over 180 days ({ref.get('easy_hr'):.1f}) = {ref['hr_ref']}") if ref.get("easy_hr") else "your typical easy-session HR"
+    frac = am.REF_HR_FRACTION_BY_SPORT.get(sport, am.REF_HR_FRACTION)
+    rest, mx = ref.get("hr_rest"), ref.get("hr_max")
+    if rest is None or mx is None:
+        return None
+    return f"rest {rest:.0f} + {frac:.0%} of HR reserve ({mx:.0f} - {rest:.0f}) = {ref['hr_ref']}"
+
+
 def _aerobic_slope(s: Optional[dict], unit: str) -> Optional[dict]:
     """The sport's shared HR-vs-output slope b and where it came from:
     "fitted" (Theil-Sen over 180 days), "shrunk" (toward the population
@@ -742,7 +758,8 @@ def _aerobic_slope(s: Optional[dict], unit: str) -> Optional[dict]:
         "source": s["source"],
         "b_fitted": _round_or_none(s.get("b_fitted"), 4),
         "default": s.get("default_b"),
-        "points": s.get("n"), "activities": s.get("n_activities"), "pairs": s.get("n_pairs"),
+        "method": "within-session pairs of steady chunks <= 20 min apart, Theil-Sen",
+        "activities": s.get("n_activities"), "pairs": s.get("n_pairs"),
         "reason": s.get("reason"),
     }
 
@@ -836,6 +853,7 @@ def build_aerobic_history(username: str, series: Optional[str] = None, include_c
             # "easy_sessions": your own typical easy-run HR (median per run,
             # 180 days); "hr_reserve": rest + 65% (walking 40%) of reserve.
             "hr_ref_source": ref.get("hr_ref_source") or "hr_reserve",
+            "hr_ref_rule": _hr_ref_rule(ref, meta["sport"]),
             "easy_hr": _round_or_none(ref.get("easy_hr")),
             "easy_sessions": ref.get("easy_activities"),
             "hr_max": ref.get("hr_max"),

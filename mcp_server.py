@@ -428,7 +428,10 @@ def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bo
     indoors, <= 1.10 outdoor rides; pace/metabolic-power CV < 5% for runs,
     < 15% for walking/hiking); first 10 min, stops and intervals
     dropped. Model: one HR = a + b*output slope per sport (cycling pools
-    indoor+outdoor), Theil-Sen over 180 days — series[].slope gives b, its
+    indoor+outdoor), from within-session evidence only (Theil-Sen over pairs
+    of chunks from the same session <= 20 min apart, 180 days, so heat,
+    day form and indoor/outdoor offsets and cardiac drift don't flatten
+    it) — series[].slope gives b, its
     source ("fitted"; "shrunk" toward the population default when data is
     thin; "default" = 0.30 bpm/W, 0.40 bpm per m/min, 6 bpm per W/kg when too
     little data or implausible) — and per series and weekly 28-day window

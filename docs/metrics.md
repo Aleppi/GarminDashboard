@@ -108,13 +108,21 @@ over the last 120 days stands in for HRmax.
 - **Model: shared slope, per-window intercept.** HR = a + b · output.
   - **One slope b per user and sport:**
     - Sports: cycling (indoor + outdoor pooled), running, walking.
-    - Fitted with **Theil–Sen** (median of pairwise slopes) over every valid
-      chunk of the last **180 days**.
-    - Pairs only between chunks of the **same series** ≤ 28 days apart, whose
-      outputs differ by ≥ 5 % of the median. The indoor/outdoor HR offset
-      and fitness changes over months move the intercept, not the slope, and
-      would bias pairs across them. Near-equal outputs make the pair's ratio
-      pure noise.
+    - Fitted from **within-session** evidence only, over the last
+      **180 days**. A session contributes if it has ≥ 3 valid chunks
+      spanning ≥ 15 % of its median output. Its pairs of chunks that start
+      **≤ 20 min apart** and differ in output by ≥ 5 % each give a slope
+      ΔHR/Δoutput, and b is the **Theil–Sen** median of all those pair
+      slopes. A session's weight grows with its chunk count.
+    - Why within-session: comparing chunks *across* sessions mixes in heat,
+      fatigue, day form and the indoor/outdoor offset. On harder days you
+      also tend to feel better, which flattens the line (the pooled fit gave
+      0.235 bpm/W).
+    - Why pairs close in time rather than demeaning each session: demeaning
+      removes those offsets but not **cardiac drift** inside a long session.
+      One example: 2.5 h at a constant 154 W, HR drifting 124 → 137, then
+      a cool-down. Demeaned, that ride's slope is −0.11, and with 30 chunks
+      it dragged b to 0.21. Over ≤ 20 min drift is ~1 bpm.
     - The slope must be **physiologically plausible**:
 
       | Output | Plausible b | Population default |
@@ -127,10 +135,10 @@ over the last 120 days stands in for HRmax.
       metabolic cost: about 23 % cycling efficiency, riders of 55–85 kg, and
       Minetti's 3.6 J/kg/m flat running cost.
     - `source`:
-      - `fitted`: plausible, from ≥ 40 chunks.
-      - `shrunk`: plausible but fewer chunks, blended
-        `b = w · fitted + (1 − w) · default` with `w = n / 40`.
-      - `default`: fewer than 8 chunks or 2 sessions, under 20 pairs, or an
+      - `fitted`: plausible, from ≥ 40 pairs.
+      - `shrunk`: plausible but fewer pairs, blended
+        `b = w · fitted + (1 − w) · default` with `w = pairs / 40`.
+      - `default`: fewer than 8 pairs or 2 contributing sessions, or an
         implausible fit.
   - **Per series (indoor/outdoor) and rolling 28-day window** (weekly: every
     Sunday, plus today): only the intercept,
@@ -153,7 +161,8 @@ over the last 120 days stands in for HRmax.
 - **Reference HR, cycling and walking:** `HRref = HRrest + 0.65 · (HRmax − HRrest)`,
   rounded, or **0.40 for walking/hiking**, so it sits inside the HR range
   hikes actually produce. The API's `hr_ref_source` says which applies
-  (`easy_sessions` or `hr_reserve`). HRrest is Garmin's configured resting HR if you set
+  (`easy_sessions` or `hr_reserve`), and `hr_ref_rule` spells out the
+  calculation, e.g. "rest 46 + 40% of HR reserve (199 - 46) = 107". HRrest is Garmin's configured resting HR if you set
   one. Otherwise it's the median of your daily resting HR over 28 days,
   measured once and then **frozen**, so the whole history stays comparable.
 - **Headline:** `Output@HRref = (HRref − a_w) / b`, e.g. "Power at 137 bpm:

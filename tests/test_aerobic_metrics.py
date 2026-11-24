@@ -287,48 +287,70 @@ class Model(unittest.TestCase):
                  "series": series, "activity_id": f"{series}-{i % sessions}", "t_start": i}
                 for i, o in enumerate(outputs)]
 
-    def test_theil_sen_recovers_slope(self):
-        pts = self._points(lambda w: 60 + 0.44 * w, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155] * 5)
+    def _session(self, aid, outputs, hr_fn, day=date(2026, 11, 10), series="bike_indoor", step_s=300):
+        return [{"date": day, "output": o, "hr": hr_fn(o, k), "temp_c": None, "series": series,
+                 "activity_id": aid, "t_start": k * step_s} for k, o in enumerate(outputs)]
+
+    def test_within_session_slope_recovered(self):
+        pts = []
+        for s in range(4):
+            pts += self._session(s, [150, 180, 160, 200, 170, 190, 155, 185, 165, 195], lambda o, k: 70 + 0.35 * o)
         fit = am.sport_slope(pts, "W", date(2026, 11, 24))
         self.assertEqual(fit["source"], "fitted")
-        self.assertAlmostEqual(fit["b"], 0.44, places=6)
+        self.assertAlmostEqual(fit["b"], 0.35, places=6)
 
-    def test_theil_sen_robust_to_outliers(self):
-        pts = self._points(lambda w: 60 + 0.3 * w, [150, 160, 170, 180, 190, 200, 210, 220] * 6)
-        for p in pts[::7]:
-            p["hr"] += 25
-        self.assertAlmostEqual(am.sport_slope(pts, "W", date(2026, 11, 24))["b"], 0.3, delta=0.02)
+    def test_between_session_offsets_ignored(self):
+        # Every session has slope 0.35 but its own offset (heat, day form,
+        # indoor vs outdoor), and the harder sessions happen to be the
+        # "good days": across sessions HR barely rises with power.
+        pts = []
+        for s, (base, offset) in enumerate([(150, 0), (175, -6), (200, -12), (225, -18)]):
+            outs = [base, base + 20, base + 5, base + 25, base + 10, base + 30] * 2
+            pts += self._session(s, outs, lambda o, k, off=offset: 70 + off + 0.35 * o, series="bike_outdoor" if s % 2 else "bike_indoor")
+        self.assertAlmostEqual(am.sport_slope(pts, "W", date(2026, 11, 24))["b"], 0.35, places=6)
 
-    def test_indoor_outdoor_offset_does_not_bias_slope(self):
-        # Outdoor HR runs 8 bpm higher at the same power: pairs stay within a
-        # series, so the pooled cycling slope is still 0.3.
-        indoor = self._points(lambda w: 80 + 0.3 * w, [150, 160, 170, 180, 190, 200] * 4, series="bike_indoor")
-        outdoor = self._points(lambda w: 88 + 0.3 * w, [210, 220, 230, 240, 250, 260] * 4, series="bike_outdoor")
-        self.assertAlmostEqual(am.sport_slope(indoor + outdoor, "W", date(2026, 11, 24))["b"], 0.3, places=6)
+    def test_cardiac_drift_does_not_bias_slope(self):
+        # 2.5 h at constant power, HR drifting 0.1 bpm/min, then a cool-down
+        # (the Nov 15 ride): demeaning the whole session gives a negative
+        # slope; time-local pairs only see the real 0.3 bpm/W responses.
+        long_ride = self._session("long", [155] * 30 + [130, 125], lambda o, k: 75 + 0.3 * o + 0.1 * 5 * k)
+        stepped = []
+        for s in range(3):
+            stepped += self._session(f"steps{s}", [160, 190, 165, 195, 170, 200, 160, 190], lambda o, k: 80 + 0.3 * o + 0.5 * k)
+        fit = am.sport_slope(long_ride + stepped, "W", date(2026, 11, 24))
+        self.assertAlmostEqual(fit["b"], 0.3, delta=0.03)
+
+    def test_sessions_without_output_range_dont_count(self):
+        flat = self._session("erg", [154, 155, 154, 155, 156] * 6, lambda o, k: 120 + 0.5 * k)  # range < 15%
+        slopes, n_act = am.within_session_slopes(flat)
+        self.assertEqual((slopes, n_act), ([], 0))
 
     def test_little_data_shrinks_toward_default(self):
-        pts = self._points(lambda w: 60 + 0.5 * w, [150, 160, 170, 180, 190, 200, 210, 220, 165, 205])
+        pts = self._session("a", [150, 180, 160, 190], lambda o, k: 60 + 0.5 * o) + \
+            self._session("b", [150, 180, 160, 190, 170], lambda o, k: 65 + 0.5 * o)
         fit = am.sport_slope(pts, "W", date(2026, 11, 24))
         self.assertEqual(fit["source"], "shrunk")
-        w = 10 / am.SLOPE_FULL_POINTS
+        w = fit["n_pairs"] / am.SLOPE_FULL_POINTS
         self.assertAlmostEqual(fit["b"], w * 0.5 + (1 - w) * am.DEFAULT_SLOPE["W"], places=6)
 
     def test_implausible_slope_uses_default(self):
-        # b = 0.15 bpm/W (Nov 2026 outdoor rides alone): population default instead.
-        pts = self._points(lambda w: 112 + 0.15 * w, [165, 175, 185, 195, 205, 215, 225, 235, 245, 250] * 5)
+        pts = []
+        for s in range(5):
+            pts += self._session(s, [165, 205, 175, 215, 185, 225, 195, 245, 250, 235], lambda o, k: 112 + 0.15 * o)
         fit = am.sport_slope(pts, "W", date(2026, 11, 24))
         self.assertEqual((fit["source"], fit["reason"]), ("default", "fitted_slope_out_of_range"))
         self.assertAlmostEqual(fit["b_fitted"], 0.15, places=6)
         self.assertEqual(fit["b"], 0.30)
 
     def test_too_little_data_uses_default(self):
-        pts = self._points(lambda w: 60 + 0.44 * w, [150, 170, 190])
+        pts = self._session("a", [150, 170, 190], lambda o, k: 60 + 0.44 * o)
         fit = am.sport_slope(pts, "m/min", date(2026, 11, 24))
         self.assertEqual((fit["b"], fit["source"]), (0.40, "default"))
 
-    def test_old_chunks_outside_180_days_ignored(self):
-        old = self._points(lambda w: 60 + 0.55 * w, [150, 170, 190, 210] * 20, start=date(2026, 1, 1))
-        new = self._points(lambda w: 60 + 0.25 * w, [150, 170, 190, 210] * 20)
+    def test_old_sessions_outside_180_days_ignored(self):
+        outs = [150, 180, 160, 200, 170, 190, 155, 185, 165, 195]
+        old = [p for s in range(5) for p in self._session(f"o{s}", outs, lambda o, k: 60 + 0.55 * o, day=date(2026, 1, 1))]
+        new = [p for s in range(5) for p in self._session(f"n{s}", outs, lambda o, k: 60 + 0.25 * o)]
         self.assertAlmostEqual(am.sport_slope(old + new, "W", date(2026, 11, 24))["b"], 0.25, places=6)
 
     def test_window_intercept_and_headline(self):
