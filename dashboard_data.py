@@ -1547,6 +1547,14 @@ def _has_interval_structure(client, activity: dict, kind: str) -> bool:
         hr_gap = activity_hr_follows_pace_gap(client, activity)
         return hr_gap is None or hr_gap >= _HR_FOLLOWS_PACE_MIN_BPM
     if kind == "cycling":
+        # With a power meter, power is the effort signal and speed is not:
+        # on the trainer it's Zwift's virtual terrain, so an ERG Z2 ride's
+        # workout-step laps (164 W at 106 m vs 269 m per lap) scored a 0.37
+        # "pace gap" and got tagged as intervals. Across six months of
+        # rides, every real interval session with power was also caught by
+        # lap power, so the speed check only adds false positives there.
+        if _has_power(activity.get("avgPower") or activity.get("averagePower")):
+            return activity_lap_power_structure(client, activity)
         gap = activity_manual_lap_pace_gap(client, activity)
         if gap is not None and gap >= PACE_INTERVAL_THRESHOLDS["cycling"]:
             return True
