@@ -424,8 +424,9 @@ def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bo
 
     Aerobic Efficiency: only steady 5-min chunks count — aerobic HR band
     (65-85% HRmax capped at LTHR; walking/hiking from 30% of HR reserve),
-    HR not trending more than 1 bpm/min, low output variability (VI <= 1.05
-    indoors, <= 1.10 outdoor rides); first 10 min, stops and intervals
+    HR not trending more than 2 bpm/min, low output variability (VI <= 1.05
+    indoors, <= 1.10 outdoor rides; pace/metabolic-power CV < 5% for runs,
+    < 15% for walking/hiking); first 10 min, stops and intervals
     dropped. Model: one HR = a + b*output slope per sport (cycling pools
     indoor+outdoor), Theil-Sen over 180 days — series[].slope gives b, its
     source ("fitted"; "shrunk" toward the population default when data is

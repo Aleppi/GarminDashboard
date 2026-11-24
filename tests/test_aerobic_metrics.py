@@ -141,8 +141,8 @@ class SteadyChunks(unittest.TestCase):
         # Rollers: HR swings +-8 bpm around a flat level (spread ~6 bpm) — steady.
         osc = ride(3600, lambda i: 175, lambda i: 140 + 8 * math.sin(2 * math.pi * i / 90))
         self.assertTrue(am.analyze_activity(details(osc), "virtual_ride", ZONES)["series"]["bike_indoor"]["points"])
-        # HR climbing 1.5 bpm/min at constant power: drifting, rejected.
-        ramp = ride(3600, lambda i: 175, lambda i: 125 + 1.5 * (i % 300) / 60)
+        # HR climbing 3 bpm/min at constant power: mid-transition, rejected.
+        ramp = ride(3600, lambda i: 175, lambda i: 125 + 3.0 * (i % 300) / 60)
         res = am.analyze_activity(details(ramp), "virtual_ride", ZONES)["series"]["bike_indoor"]
         self.assertEqual(res["points"], [])
         self.assertGreater(res["reasons"].get("hr_drifting", 0), 0)
@@ -210,6 +210,17 @@ class RunAndWalk(unittest.TestCase):
         self.assertEqual(len(pts), 10)
         for p in pts:
             self.assertAlmostEqual(p["output"], 180.0, delta=180 * 0.02)
+
+    def test_walking_tolerates_more_pace_variation_than_running(self):
+        # Pace swinging +-15% over 2 min (smoothed CV ~10%): steady for a hike, not for a run.
+        def v(base):
+            return lambda i: base * (1 + 0.15 * math.sin(2 * math.pi * i / 120))
+        zones = dict(ZONES, DEFAULT={"hr_max": 199, "lthr": 174, "hr_rest": 46})
+        hike = am.analyze_activity(details(run(3600, v(1.2), lambda i: 110, grade=0.08)), "hiking", zones)
+        self.assertTrue(hike["series"]["walk_outdoor"]["points"])
+        runr = am.analyze_activity(details(run(3600, v(3.0), lambda i: 150)), "running", zones)
+        self.assertEqual(runr["series"]["run_outdoor"]["points"], [])
+        self.assertGreater(runr["series"]["run_outdoor"]["reasons"].get("variable_output", 0), 0)
 
     def test_walk_metabolic_power(self):
         res = am.analyze_activity(details(run(3600, lambda i: 1.2, lambda i: 135, grade=0.10)), "hiking", ZONES)

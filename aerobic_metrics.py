@@ -25,12 +25,13 @@ from typing import Any, Iterable, Optional
 
 # Bump whenever a change below would alter cached results: the sync job
 # reprocesses every activity whose stored algo_version is older.
-ALGO_VERSION = 5  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
+ALGO_VERSION = 6  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
                   # 3: durability by per-half regression (NP-EF fallback), outdoor-bike VI 1.20
                   # 4: outdoor-bike chunk VI 1.10, per-half VI check on NP-EF, ski touring
                   #    (uphill only) and snowshoeing in walk_outdoor
                   # 5: chunk HR trend (|slope| <= 1 bpm/min) instead of HR spread; walking HR
                   #    floor 30% HRR
+                  # 6: HR trend limit 2 bpm/min, walking output CV limit 15%
 
 WARMUP_S = 600                 # dropped from the start of each activity (HR settling)
 CHUNK_S = 300                  # one data point per 5 min of steady effort
@@ -40,15 +41,20 @@ SEGMENT_BREAK_S = 30           # a stop/pause this long splits a steady segment
 FILL_MAX_GAP_S = 10            # samples further apart than this = timer paused, not smart recording
 HR_BAND_LO = 0.65              # aerobic band, fraction of HRmax...
 HR_BAND_HI = 0.85              # ...capped at LTHR when that's lower
-CHUNK_HR_TREND_MAX = 1.0       # bpm/min; |slope| of 30 s-smoothed HR across the chunk. Steeper = HR
+CHUNK_HR_TREND_MAX = 2.0       # bpm/min; |slope| of 30 s-smoothed HR across the chunk. Steeper = HR
                                # still settling or drifting (a transition). A trend, not a spread: on
                                # rolling terrain HR oscillates +-5-15 bpm around a flat level, which is
-                               # steady for our purposes
+                               # steady for our purposes. 1.0 rejected most chunks after any effort
+                               # change (HR needs 2-3 min to settle), indoors too: 2.0 keeps those
+                               # while still rejecting a chunk that's mid-transition.
 CHUNK_VI_MAX = 1.05            # power: NP / avg power (inclusive)
 # Outdoor loops with small rollers move power around even at a steady
 # effort; 1.05 left 0-4 chunks per half on every long outdoor ride.
 CHUNK_VI_MAX_BY_SERIES = {"bike_outdoor": 1.10}
 CHUNK_CV_MAX = 0.05            # speed-based: CV of the 30 s-smoothed output
+# Trail walking changes pace constantly (steps, roots, gradient) even at a
+# steady effort: 5% rejected every hike chunk; 15% keeps the steady stretches.
+CHUNK_CV_MAX_BY_SPORT = {"walking": 0.15}
 CHUNK_COVERAGE_MIN = 0.95      # share of seconds with both HR and output present
 SMOOTH_S = 30                  # rolling window for NP / CV
 GRADE_WINDOW_M = 25.0          # horizontal distance a gradient is measured over
@@ -475,7 +481,8 @@ def hr_trend_bpm_per_min(hrs: list[float]) -> Optional[float]:
 
 
 def evaluate_chunk(hr: list[Optional[float]], out: list[Optional[float]], signal: str,
-                   band: tuple[float, float], vi_max: float = CHUNK_VI_MAX) -> tuple[Optional[dict], str]:
+                   band: tuple[float, float], vi_max: float = CHUNK_VI_MAX,
+                   cv_max: float = CHUNK_CV_MAX) -> tuple[Optional[dict], str]:
     """(point, "ok") for a steady aerobic chunk, else (None, reason)."""
     n = len(hr)
     both = [(h, o) for h, o in zip(hr, out) if h is not None and o is not None]
@@ -498,7 +505,7 @@ def evaluate_chunk(hr: list[Optional[float]], out: list[Optional[float]], signal
             return None, "variable_output"
     else:
         cv = smoothed_cv(outs)
-        if cv is None or cv >= CHUNK_CV_MAX:
+        if cv is None or cv >= cv_max:
             return None, "variable_output"
     return {"output": mean_out, "hr": mean_hr}, "ok"
 
@@ -515,6 +522,7 @@ def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
     band = hr_band(hr_max, lthr, hr_rest=hr_rest, sport=SERIES[series]["sport"])
     signal = SERIES[series]["signal"]
     vi_max = CHUNK_VI_MAX_BY_SERIES.get(series, CHUNK_VI_MAX)
+    cv_max = CHUNK_CV_MAX_BY_SPORT.get(SERIES[series]["sport"], CHUNK_CV_MAX)
 
     segments: list[list[int]] = []
     for p, i in enumerate(idx):
@@ -528,7 +536,7 @@ def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
         run: list[dict] = []
         for c in range(len(seg) // CHUNK_S):
             sl = seg[c * CHUNK_S:(c + 1) * CHUNK_S]
-            point, reason = evaluate_chunk([grid.hr[i] for i in sl], [out[i] for i in sl], signal, band, vi_max)
+            point, reason = evaluate_chunk([grid.hr[i] for i in sl], [out[i] for i in sl], signal, band, vi_max, cv_max)
             reasons[reason] = reasons.get(reason, 0) + 1
             if point is not None:
                 point["t_start"] = grid.t[sl[0]]

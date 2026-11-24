@@ -83,7 +83,7 @@ For each activity and series:
      under 65 % of HRmax, and HR still tracks VO₂ linearly above ~30 % of
      reserve.
    - **HR not trending:** the least-squares slope of the 30 s-smoothed HR
-     across the chunk is within **±1.0 bpm/min**. A chunk still catching a
+     across the chunk is within **±2.0 bpm/min**. A chunk still catching a
      transition (HR settling after a change, or drifting) is rejected. HR that
      *oscillates* around a flat level is kept, e.g. ±10 bpm over rollers. An
      HR-spread rule (< 5 bpm) used to reject nearly every outdoor chunk for
@@ -91,7 +91,9 @@ For each activity and series:
    - low variability: **power** VI = NP ÷ average ≤ 1.05 indoors, **≤ 1.10
      for outdoor rides**, where rollers move power around at a steady effort
      (NP from 30 s rolling power); **speed-based** CV of the 30 s rolling
-     output < 5 %
+     output < 5 % for runs, **< 15 % for walking/hiking/ski touring**: trail
+     pace changes constantly with steps, roots and gradient, even at a steady
+     effort.
 6. Only runs of **≥ 2 consecutive valid chunks** (≥ 10 min steady) count.
    Each valid chunk becomes one point: (mean output, mean HR, date,
    temperature for outdoor activities).
@@ -190,7 +192,7 @@ over the last 120 days stands in for HRmax.
 
 | Method | When | How |
 |---|---|---|
-| `regression` (primary) | ≥ **4 valid 5-min chunks** in each half (the same filters as Aerobic Efficiency: aerobic HR band, steady HR, VI < 1.05 / CV < 5 %, ≥ 2 in a row), and the halves' chunk output ranges overlap (within 2 % of the median) | Fit HR = a + b·output on each half's chunks. Read both fits at a **common reference output**, the middle of the overlap. Decoupling % = (HR₂ − HR₁) / HR₂ × 100, the drop in output per heartbeat at the same output. Within one session the output range can be tiny (ERG), so each half's slope is clamped to 0…the plausible maximum and re-centred on that half's mean. The reading then always stays inside the data. |
+| `regression` (primary) | ≥ **4 valid 5-min chunks** in each half (the same filters as Aerobic Efficiency: aerobic HR band, HR not trending, VI ≤ 1.05/1.10 / CV < 5 % (15 % walking), ≥ 2 in a row), and the halves' chunk output ranges overlap (within 2 % of the median) | Fit HR = a + b·output on each half's chunks. Read both fits at a **common reference output**, the middle of the overlap. Decoupling % = (HR₂ − HR₁) / HR₂ × 100, the drop in output per heartbeat at the same output. Within one session the output range can be tiny (ERG), so each half's slope is clamped to 0…the plausible maximum and re-centred on that half's mean. The reading then always stays inside the data. |
 | `np_ef` (fallback) | too few chunks or no overlap, the halves' **NP differ by ≤ 10 %**, and their **VIs (NP ÷ avg per half) differ by ≤ 0.05**. NP rewards surges, so a surgier second half inflates its NP and hides HR drift. | EF = NP ÷ mean HR per half. Runs and hikes use mean GAS / metabolic power, which already account for terrain. Decoupling % = (EF₁ − EF₂) / EF₁ × 100. |
 | `excluded` | neither | The halves can't be compared. Stored with no score, with `exclude_reason` `np_differs` or `vi_differs`, and listed separately (`durability_excluded`). |
 
