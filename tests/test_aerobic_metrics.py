@@ -376,6 +376,17 @@ class Model(unittest.TestCase):
         self.assertEqual(am.reference_hr(50, 186), 138)
         self.assertEqual(am.reference_hr(46, 199, "walking"), 107)  # 40% of HR reserve
 
+    def test_easy_reference_hr_is_median_of_runs(self):
+        today = date(2026, 11, 24)
+        pts = []
+        for k, (hr, n) in enumerate([(167, 2), (163, 8), (168, 2), (164, 7), (166, 2), (164, 6)]):
+            pts += [{"date": today - timedelta(days=10 * k), "hr": hr, "activity_id": k} for _ in range(n)]
+        hr, n = am.easy_reference_hr(pts, today)
+        self.assertEqual((hr, n), (165.0, 6))  # median of per-run medians: long runs don't dominate
+        self.assertEqual(am.easy_reference_hr(pts[:10], today), (None, 2))  # too few runs
+        old = [dict(p, date=today - timedelta(days=200)) for p in pts]
+        self.assertEqual(am.easy_reference_hr(old, today)[0], None)
+
     def test_weekly_windows_and_change(self):
         start = date(2026, 9, 1)
         pts = []

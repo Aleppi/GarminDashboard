@@ -119,6 +119,19 @@ REF_HR_FRACTION = 0.65         # HRref = rest + 0.65 * (max - rest)
 WALK_HR_FLOOR_HRR = 0.30
 WALK_HR_FLOOR_FALLBACK = 0.50  # fraction of HRmax when resting HR is unknown
 REF_HR_FRACTION_BY_SPORT = {"walking": 0.40}
+# Running: the reference HR is the athlete's own typical easy-run HR, not a
+# % of reserve. Zones compress very differently: a fit runner's easy pace
+# sits far below threshold, while an untrained one is in Z3 as soon as they
+# run at all, so a fixed 65% of reserve can sit 10+ bpm below every run they
+# do (and the headline becomes an extrapolation). Median of each run's
+# median steady-chunk HR over EASY_REF_DAYS; needs EASY_REF_MIN_ACTIVITIES
+# runs, else the % formula; only moves when it shifts >= EASY_REF_UPDATE_BPM
+# (every week of history is re-read at the same reference, so a move only
+# relabels the line, but it shouldn't flicker).
+EASY_REF_SPORTS = {"running"}
+EASY_REF_DAYS = 180
+EASY_REF_MIN_ACTIVITIES = 3
+EASY_REF_UPDATE_BPM = 3
 
 
 # ---------------------------------------------------------------- Minetti --
@@ -745,6 +758,20 @@ def analyze_activity(details: dict, type_key: str, zones: dict[str, dict], inter
 
 def reference_hr(hr_rest: float, hr_max: float, sport: Optional[str] = None) -> int:
     return int(round(hr_rest + REF_HR_FRACTION_BY_SPORT.get(sport, REF_HR_FRACTION) * (hr_max - hr_rest)))
+
+
+def easy_reference_hr(points: list[dict], today: date) -> tuple[Optional[float], int]:
+    """(typical easy-session HR, number of sessions) from steady chunks:
+    the median of each activity's median chunk HR over EASY_REF_DAYS, so one
+    long run can't dominate. None when fewer than EASY_REF_MIN_ACTIVITIES."""
+    since = today - timedelta(days=EASY_REF_DAYS)
+    per_act: dict[Any, list[float]] = {}
+    for p in points:
+        if p.get("hr") and p["date"] >= since:
+            per_act.setdefault(p.get("activity_id"), []).append(p["hr"])
+    if len(per_act) < EASY_REF_MIN_ACTIVITIES:
+        return None, len(per_act)
+    return statistics.median(statistics.median(v) for v in per_act.values()), len(per_act)
 
 
 def heat_weight(temp_c: Optional[float]) -> float:

@@ -111,10 +111,15 @@ def refresh_refs(username: str, client, activities: list[dict]) -> dict[str, dic
         if not hr_rest:
             continue
         # Deterministic from the (frozen) HRmax / resting HR and the sport's
-        # fraction, so recomputing it every run never moves it by itself.
+        # fraction, so recomputing it every run never moves it by itself —
+        # unless it's the athlete's own easy-run HR (set in rebuild_weekly).
+        hr_ref_source = "hr_reserve"
         hr_ref = am.reference_hr(hr_rest, hr_max, sport)
-        if (prev.get("hr_max"), prev.get("hr_rest"), prev.get("lthr"), prev.get("hr_ref")) != (hr_max, hr_rest, lthr, hr_ref):
-            store.save_ref(username, zone_sport, hr_max, hr_rest, lthr, hr_ref, source)
+        if sport in am.EASY_REF_SPORTS and prev.get("hr_ref_source") == "easy_sessions" and prev.get("hr_ref"):
+            hr_ref, hr_ref_source = prev["hr_ref"], "easy_sessions"
+        if ((prev.get("hr_max"), prev.get("hr_rest"), prev.get("lthr"), prev.get("hr_ref"), prev.get("hr_ref_source"))
+                != (hr_max, hr_rest, lthr, hr_ref, hr_ref_source)):
+            store.save_ref(username, zone_sport, hr_max, hr_rest, lthr, hr_ref, source, hr_ref_source)
     return store.get_refs(username)
 
 
@@ -184,6 +189,31 @@ def process_activity(username: str, client, activity: dict, zones: dict[str, dic
     return "used" if analysis.get("series") else "skipped"
 
 
+def update_easy_refs(username: str, by_series: dict[str, list[dict]], today: date) -> None:
+    """Running's reference HR = the athlete's typical easy-run HR (see
+    aerobic_metrics.EASY_REF_SPORTS). Falls back to the % of HR reserve
+    until there are enough runs; moves only on a >= 3 bpm shift."""
+    refs = store.get_refs(username)
+    for sport in am.EASY_REF_SPORTS:
+        zone_sport = am.ZONE_SPORT[sport]
+        ref = refs.get(zone_sport)
+        if not ref:
+            continue
+        pts = [r for s, rows in by_series.items() if am.SERIES[s]["sport"] == sport for r in rows]
+        easy, n_act = am.easy_reference_hr(pts, today)
+        if easy is None:
+            if ref.get("hr_ref_source") == "easy_sessions":
+                store.set_easy_ref(username, zone_sport, None, None, n_act, "easy_sessions")  # keep the last value
+            else:
+                store.set_easy_ref(username, zone_sport, None, None, n_act, "hr_reserve")
+            continue
+        new = int(round(easy))
+        if ref.get("hr_ref_source") != "easy_sessions" or abs(new - (ref.get("hr_ref") or 0)) >= am.EASY_REF_UPDATE_BPM:
+            store.set_easy_ref(username, zone_sport, new, easy, n_act, "easy_sessions")
+        else:
+            store.set_easy_ref(username, zone_sport, None, easy, n_act, "easy_sessions")
+
+
 def rebuild_weekly(username: str, today: Optional[date] = None) -> None:
     """Refit every weekly window from cached chunks. Milliseconds per series
     — the expensive stream work never repeats — so a full rebuild is simpler
@@ -197,6 +227,7 @@ def rebuild_weekly(username: str, today: Optional[date] = None) -> None:
         for r in rows:
             r["date"] = date.fromisoformat(r["day"])
         by_series[series] = rows
+    update_easy_refs(username, by_series, today)
     # One slope per sport (cycling pools indoor + outdoor), shared by every
     # series and week of that sport; the windows only fit intercepts.
     slopes: dict[str, dict] = {}

@@ -73,6 +73,7 @@ _ADDED_COLUMNS = {
                  "hr1_at_ref": "REAL", "hr2_at_ref": "REAL", "np1": "REAL", "np2": "REAL",
                  "vi1": "REAL", "vi2": "REAL", "exclude_reason": "TEXT"},
     "weekly": {"fit_issue": "TEXT", "raw_b": "REAL", "mad": "REAL"},
+    "user_ref": {"hr_ref_source": "TEXT", "easy_hr": "REAL", "easy_activities": "INTEGER"},
 }
 _migrated: set[str] = set()
 
@@ -215,15 +216,30 @@ def get_refs(username: str) -> dict[str, dict]:
 
 
 def save_ref(username: str, zone_sport: str, hr_max: float, hr_rest: float, lthr: Optional[float],
-             hr_ref: int, source: str) -> None:
+             hr_ref: int, source: str, hr_ref_source: str = "hr_reserve") -> None:
     with _connect() as conn:
         conn.execute(
-            """INSERT INTO user_ref (username, zone_sport, hr_max, hr_rest, lthr, hr_ref, source, updated_at)
-               VALUES (?,?,?,?,?,?,?,?)
+            """INSERT INTO user_ref (username, zone_sport, hr_max, hr_rest, lthr, hr_ref, source, updated_at, hr_ref_source)
+               VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(username, zone_sport) DO UPDATE SET hr_max = excluded.hr_max, hr_rest = excluded.hr_rest,
-               lthr = excluded.lthr, hr_ref = excluded.hr_ref, source = excluded.source, updated_at = excluded.updated_at""",
-            (username, zone_sport, hr_max, hr_rest, lthr, hr_ref, source, time.time()),
+               lthr = excluded.lthr, hr_ref = excluded.hr_ref, source = excluded.source, updated_at = excluded.updated_at,
+               hr_ref_source = excluded.hr_ref_source""",
+            (username, zone_sport, hr_max, hr_rest, lthr, hr_ref, source, time.time(), hr_ref_source),
         )
+        conn.commit()
+
+
+def set_easy_ref(username: str, zone_sport: str, hr_ref: Optional[int], easy_hr: Optional[float],
+                 n_activities: int, hr_ref_source: str) -> None:
+    """Record the measured easy-session HR; hr_ref=None leaves the reference as is."""
+    with _connect() as conn:
+        if hr_ref is None:
+            conn.execute("UPDATE user_ref SET easy_hr = ?, easy_activities = ? WHERE username = ? AND zone_sport = ?",
+                         (easy_hr, n_activities, username, zone_sport))
+        else:
+            conn.execute("""UPDATE user_ref SET hr_ref = ?, hr_ref_source = ?, easy_hr = ?, easy_activities = ?,
+                            updated_at = ? WHERE username = ? AND zone_sport = ?""",
+                         (hr_ref, hr_ref_source, easy_hr, n_activities, time.time(), username, zone_sport))
         conn.commit()
 
 

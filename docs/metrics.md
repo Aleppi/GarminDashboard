@@ -139,9 +139,21 @@ over the last 120 days stands in for HRmax.
     a narrow output range it swung freely, and so did the headline (outdoor
     bike jumped between ~155 and ~210 W). Fitness moves the line up and down,
     not its steepness, so that's what each window estimates now.
-- **Reference HR** per sport: `HRref = HRrest + 0.65 · (HRmax − HRrest)`,
+- **Reference HR, running: your own typical easy-run HR.** It's the median of
+  each run's median steady-chunk HR over the last 180 days, rounded. Every
+  run counts once, so one long run can't dominate. It needs ≥ 3 runs; until
+  then the formula below applies. Once set it only moves when the measured
+  value shifts by ≥ 3 bpm. Every week of history is re-read at the same
+  reference, so a move only relabels the line, but it shouldn't flicker.
+  Why: zones compress very differently between people. A fit runner's easy
+  pace sits far below threshold, while an untrained runner is in Z3 as soon as
+  they run at all. A fixed 65 % of reserve could sit 10+ bpm below every run
+  someone does, which turned the headline into an extrapolation (Anna:
+  152 bpm reference, runs at 157–169).
+- **Reference HR, cycling and walking:** `HRref = HRrest + 0.65 · (HRmax − HRrest)`,
   rounded, or **0.40 for walking/hiking**, so it sits inside the HR range
-  hikes actually produce. HRrest is Garmin's configured resting HR if you set
+  hikes actually produce. The API's `hr_ref_source` says which applies
+  (`easy_sessions` or `hr_reserve`). HRrest is Garmin's configured resting HR if you set
   one. Otherwise it's the median of your daily resting HR over 28 days,
   measured once and then **frozen**, so the whole history stays comparable.
 - **Headline:** `Output@HRref = (HRref − a_w) / b`, e.g. "Power at 137 bpm:

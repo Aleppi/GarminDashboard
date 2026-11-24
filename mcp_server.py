@@ -432,7 +432,10 @@ def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bo
     source ("fitted"; "shrunk" toward the population default when data is
     thin; "default" = 0.30 bpm/W, 0.40 bpm per m/min, 6 bpm per W/kg when too
     little data or implausible) — and per series and weekly 28-day window
-    only the intercept a_w = median(HR - b*output). output_at_hr_ref =
+    only the intercept a_w = median(HR - b*output). HR_ref: running = the
+    athlete's typical easy-run HR (median per run, 180 days, >= 3 runs;
+    hr_ref_source "easy_sessions"), else rest + 65% of HR reserve (walking
+    40%; "hr_reserve"). output_at_hr_ref =
     (HR_ref - a_w)/b (higher = fitter), hr_at_ref_output = a_w + b*ref
     (lower = fitter). confidence from the window's points and residual MAD:
     high >= 15 points & MAD <= 3 bpm, medium >= 8 & <= 5, else low. Indoor

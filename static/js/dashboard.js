@@ -1063,6 +1063,7 @@
     foot += '<div class="ae-dim">Type any ' + (unit === 'm/min' ? 'pace' : 'output') + ' to see your HR at it' +
       (s.ref_output_pinned ? '' : ' (default: your typical recent ' + (unit === 'm/min' ? 'pace' : 'output') + ')') + '. ' +
       'Lower HR at the same output, or more output at ' + s.hr_ref + ' bpm, means fitter. ' +
+      (s.hr_ref_source === 'easy_sessions' ? s.hr_ref + ' bpm is your typical easy-run HR (last 180 days, ' + (s.easy_sessions || '') + ' runs). ' : '') +
       (s.slope ? 'HR rises ' + s.slope.b.toFixed(unit === 'W' ? 2 : (unit === 'W/kg' ? 1 : 2)) + ' ' + escapeHtml(s.slope.unit) +
         (s.slope.source === 'fitted' ? ' (your ' + escapeHtml(s.sport) + ' data, 180 days)'
           : s.slope.source === 'shrunk' ? ' (your data, blended with a typical value — still little data)'

@@ -833,6 +833,11 @@ def build_aerobic_history(username: str, series: Optional[str] = None, include_c
             "unit": meta["unit"],
             "signal": meta["signal"],
             "hr_ref": hr_ref,
+            # "easy_sessions": your own typical easy-run HR (median per run,
+            # 180 days); "hr_reserve": rest + 65% (walking 40%) of reserve.
+            "hr_ref_source": ref.get("hr_ref_source") or "hr_reserve",
+            "easy_hr": _round_or_none(ref.get("easy_hr")),
+            "easy_sessions": ref.get("easy_activities"),
             "hr_max": ref.get("hr_max"),
             "hr_rest": ref.get("hr_rest"),
             "lthr": ref.get("lthr"),
@@ -896,6 +901,7 @@ def build_aerobic(username: Optional[str]) -> Optional[dict]:
             efficiency.append({
                 "series": s["series"], "label": s["label"], "sport": s["sport"], "indoor": s["indoor"], "unit": unit,
                 "hr_ref": s["hr_ref"],
+                "hr_ref_source": s["hr_ref_source"],
                 "value": round(latest["output_at_hr_ref"], 2),
                 "display": am.format_output(latest["output_at_hr_ref"], unit),
                 "headline": f"{am.format_output(latest['output_at_hr_ref'], unit)} @ {s['hr_ref']} bpm",
