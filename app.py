@@ -26,6 +26,7 @@ from dashboard_data import (
     MAX_TREND_RANGE_DAYS,
     build_activity_calendar,
     build_activity_training_load,
+    build_aerobic_history,
     build_metric_history,
     build_vitals_history,
     VITALS_HISTORY_METRICS,
@@ -392,6 +393,54 @@ def api_activity_training_load(activity_id: str):
     prefer_power = any(hint in type_key for hint in CYCLING_TYPE_HINTS)
     result = build_activity_training_load(client, activity_id, prefer_power, total_load)
     return jsonify(result)
+
+
+@app.route("/api/aerobic")
+@auth.login_required
+def api_aerobic():
+    """Weekly Aerobic Efficiency + per-session Durability behind the two
+    expandable tiles. Reads only the aerobic cache (filled by the
+    aerobic_sync timer), so no Garmin call and no range cache needed."""
+    return jsonify(build_aerobic_history(auth.current_username()))
+
+
+@app.route("/api/aerobic/ref-output", methods=["POST"])
+@auth.login_required
+def api_aerobic_ref_output():
+    """Pin the reference output behind "HR at <output>" for one series —
+    a number in the series' unit (W, W/kg) or, for running, a pace "m:ss"
+    per km. A null value drops the pin; the next sync picks a default."""
+    import aerobic_metrics
+    import aerobic_store
+
+    username = auth.current_username()
+    body = request.get_json(silent=True) or {}
+    series = body.get("series")
+    if series not in aerobic_metrics.SERIES:
+        return jsonify({"error": "unknown series"}), 400
+    unit = aerobic_metrics.SERIES[series]["unit"]
+    raw = body.get("value")
+    if raw in (None, ""):
+        aerobic_store.set_ref_output(username, series, None, pinned=False)
+        import aerobic_sync  # cache-only: recomputes the default reference now, no Garmin call
+
+        aerobic_sync.rebuild_weekly(username)
+        value = (aerobic_store.get_ref_outputs(username).get(series) or {}).get("value")
+    else:
+        try:
+            if unit == "m/min" and isinstance(raw, str) and ":" in raw:
+                m, s = raw.strip().split(":")
+                value = 60000 / (int(m) * 60 + int(s))
+            else:
+                value = float(raw)
+        except (ValueError, ZeroDivisionError):
+            return jsonify({"error": "value must be a number, or a pace like 5:10 for running"}), 400
+        if not 0 < value < 5000:
+            return jsonify({"error": "value out of range"}), 400
+        aerobic_store.set_ref_output(username, series, value, pinned=True)
+    with _cache_lock:
+        _caches.pop(username, None)
+    return jsonify({"saved": True, "series": series, "value": value})
 
 
 @app.route("/api/trend")

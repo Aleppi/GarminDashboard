@@ -672,6 +672,220 @@ def build_metric_history(client, metric: str, today: str) -> dict:
     return {"error": f"unknown metric '{metric}'"}
 
 
+# ------------------------------------- aerobic efficiency and durability --
+# Our own metrics (aerobic_metrics.py, docs/metrics.md), computed from raw
+# activity streams by the aerobic_sync timer job. Everything here only reads
+# that cache — no Garmin calls — so it's cheap enough for every payload.
+
+AEROBIC_SPARK_WEEKS = 12
+AEROBIC_STALE_DAYS = 14          # latest window older than this = "no recent steady sessions"
+DURABILITY_SESSIONS = 8
+
+
+def _aerobic_ref_for(series: str, refs: dict[str, dict]) -> Optional[dict]:
+    import aerobic_metrics as am
+
+    return refs.get(am.ZONE_SPORT[am.SERIES[series]["sport"]])
+
+
+def _aerobic_change_display(change: Optional[dict], unit: str) -> Optional[str]:
+    if not change:
+        return None
+    pct = change.get("pct")
+    pct_s = f"{pct:+.1f}%" if pct is not None else ""
+    if unit == "m/min":
+        # Faster at the same HR shows as a pace that's lower: say it in s/km.
+        latest_pace = 60000 / (change["latest"]) if change.get("latest") else None
+        earlier_pace = 60000 / (change["latest"] - change["abs"]) if change.get("latest") else None
+        if latest_pace and earlier_pace:
+            return f"{latest_pace - earlier_pace:+.0f} s/km ({pct_s})"
+        return pct_s
+    if unit == "W/kg":
+        return f"{change['abs']:+.2f} W/kg ({pct_s})"
+    return f"{change['abs']:+.0f} W ({pct_s})"
+
+
+def _aerobic_series_weeks(rows: list[dict], hr_ref: float, ref_output: Optional[float]) -> list[dict]:
+    import aerobic_metrics as am
+
+    weeks = []
+    for r in rows:
+        head = am.window_headline(r, hr_ref, ref_output)
+        weeks.append({
+            "week_end": r["week_end"],
+            "n": r["n"],
+            "output_at_hr_ref": head["output_at_hr_ref"],
+            "hr_at_ref_output": head["hr_at_ref_output"],
+            "confidence": head["confidence"],
+            "mean_temp_c": r.get("mean_temp_c"),
+            "hot_points": r.get("hot_points"),
+        })
+    return weeks
+
+
+def _round_or_none(v: Optional[float], nd: int = 1) -> Optional[float]:
+    return round(v, nd) if isinstance(v, (int, float)) else None
+
+
+def _durability_session(s: dict) -> dict:
+    import aerobic_metrics as am
+
+    unit = am.SERIES[s["series"]]["unit"]
+    return {
+        "activity_id": s["activity_id"],
+        "date": s["day"],
+        "name": s.get("name"),
+        "series": s["series"],
+        "decoupling_pct": _round_or_none(s["decoupling_pct"]),
+        "label": s["label"],
+        "moving_min": round((s.get("moving_s") or 0) / 60),
+        "variability_index": s.get("vi"),
+        "first_half": {"output": am.format_output(s["output1"], unit), "hr": _round_or_none(s["hr1"])},
+        "second_half": {"output": am.format_output(s["output2"], unit), "hr": _round_or_none(s["hr2"])},
+        "temp_c": s.get("temp_c"),
+    }
+
+
+def build_aerobic_history(username: str, series: Optional[str] = None, include_chunks: bool = False,
+                          weeks: Optional[int] = None) -> dict:
+    """Full detail behind the Aerobic Efficiency / Durability tiles: every
+    series' weekly values at its fixed reference HR and reference output,
+    and per-session decoupling. Also what the get_aerobic_efficiency MCP
+    tool returns."""
+    import aerobic_metrics as am
+    import aerobic_store as store
+
+    refs = store.get_refs(username)
+    ref_outputs = store.get_ref_outputs(username)
+    weekly_rows = store.weekly(username, series)
+    by_series: dict[str, list[dict]] = {}
+    for r in weekly_rows:
+        by_series.setdefault(r["series"], []).append(r)
+    sessions = store.durability_sessions(username, series)
+    keys = [k for k in am.SERIES if k in by_series or any(s["series"] == k for s in sessions)]
+    if series:
+        keys = [k for k in keys if k == series]
+
+    today = date.today()
+    out_series = []
+    for key in keys:
+        meta = am.SERIES[key]
+        ref = _aerobic_ref_for(key, refs) or {}
+        hr_ref = ref.get("hr_ref")
+        ref_out = (ref_outputs.get(key) or {}).get("value")
+        rows = by_series.get(key, [])
+        week_list = _aerobic_series_weeks(rows, hr_ref, ref_out) if hr_ref else []
+        if weeks:
+            week_list = week_list[-weeks:]
+        for w in week_list:
+            w["output_display"] = am.format_output(w["output_at_hr_ref"], meta["unit"])
+        latest = week_list[-1] if week_list else None
+        change = am.change_vs(week_list, "output_at_hr_ref")
+        if change:
+            change["latest"] = latest["output_at_hr_ref"]
+            change["display"] = _aerobic_change_display(change, meta["unit"])
+        stale = bool(latest) and (today - date.fromisoformat(latest["week_end"])).days > AEROBIC_STALE_DAYS
+        entry: dict[str, Any] = {
+            "series": key,
+            "label": meta["label"],
+            "sport": meta["sport"],
+            "indoor": meta["indoor"],
+            "unit": meta["unit"],
+            "signal": meta["signal"],
+            "hr_ref": hr_ref,
+            "hr_max": ref.get("hr_max"),
+            "hr_rest": ref.get("hr_rest"),
+            "lthr": ref.get("lthr"),
+            "ref_output": ref_out,
+            "ref_output_display": am.format_output(ref_out, meta["unit"]),
+            "ref_output_pinned": bool((ref_outputs.get(key) or {}).get("pinned")),
+            "latest": latest,
+            "stale": stale,
+            "change_6w": change,
+            "weeks": week_list,
+            "durability": [_durability_session(s) for s in sessions if s["series"] == key][:DURABILITY_SESSIONS],
+        }
+        if include_chunks:
+            entry["chunks"] = [
+                {"date": c["day"], "activity_id": c["activity_id"], "t_start": c["t_start"],
+                 "output": round(c["output"], 2), "hr": round(c["hr"], 1), "temp_c": c["temp_c"]}
+                for c in store.chunk_points(username, key)
+            ]
+        out_series.append(entry)
+
+    state = store.get_sync_state(username) or {}
+    return {
+        "status": "ok" if state.get("last_sync") else "pending",
+        "last_sync": datetime.fromtimestamp(state["last_sync"]).isoformat(timespec="minutes") if state.get("last_sync") else None,
+        "last_error": state.get("last_error"),
+        "heat_correction": _aerobic_heat_correction(),
+        "series": out_series,
+        "activities_processed": store.processed_summary(username),
+        "method": "docs/metrics.md — steady 5-min chunks in the aerobic HR band, robust HR~output fit over a "
+                  "rolling 28 days, evaluated weekly; durability = first-half vs second-half output/HR "
+                  "on sessions >= 90 min without intervals.",
+    }
+
+
+def _aerobic_heat_correction() -> bool:
+    return os.getenv("AEROBIC_HEAT_CORRECTION", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def build_aerobic(username: Optional[str]) -> Optional[dict]:
+    """Compact Aerobic Efficiency / Durability summary for the dashboard
+    payload and the training snapshot: per series, the headline value at the
+    reference HR, the HR at the reference output, 6-week change, confidence,
+    a 12-week sparkline, and the last durability session."""
+    if not username:
+        return None
+    try:
+        full = build_aerobic_history(username)
+    except Exception as exc:  # noqa: BLE001 - a cache problem must not take down the dashboard
+        logger.warning("aerobic summary for %s failed: %s", username, exc)
+        return None
+    import aerobic_metrics as am
+
+    efficiency, durability = [], []
+    for s in full["series"]:
+        latest = s["latest"]
+        if latest and latest["output_at_hr_ref"] is not None:
+            unit = s["unit"]
+            efficiency.append({
+                "series": s["series"], "label": s["label"], "sport": s["sport"], "indoor": s["indoor"], "unit": unit,
+                "hr_ref": s["hr_ref"],
+                "value": round(latest["output_at_hr_ref"], 2),
+                "display": am.format_output(latest["output_at_hr_ref"], unit),
+                "headline": f"{am.format_output(latest['output_at_hr_ref'], unit)} @ {s['hr_ref']} bpm",
+                "ref_output": s["ref_output"],
+                "ref_output_display": s["ref_output_display"],
+                "hr_at_ref_output": _round_or_none(latest["hr_at_ref_output"]),
+                "confidence": latest["confidence"],
+                "n": latest["n"],
+                "as_of": latest["week_end"],
+                "stale": s["stale"],
+                "change_6w": s["change_6w"] and {
+                    "abs": round(s["change_6w"]["abs"], 2),
+                    "pct": _round_or_none(s["change_6w"]["pct"]),
+                    "display": s["change_6w"]["display"],
+                },
+                "spark": [_round_or_none(w["output_at_hr_ref"], 2) for w in s["weeks"][-AEROBIC_SPARK_WEEKS:]],
+                "hot_points": latest.get("hot_points"),
+            })
+        if s["durability"]:
+            durability.append({"series": s["series"], "label": s["label"], "indoor": s["indoor"],
+                               "last": s["durability"][0], "sessions": s["durability"]})
+
+    # Lead with the series that has the freshest, best-supported data.
+    efficiency.sort(key=lambda e: (e["stale"], -(e["n"] or 0)))
+    durability.sort(key=lambda d: d["last"]["date"], reverse=True)
+    return {
+        "status": full["status"],
+        "last_sync": full["last_sync"],
+        "efficiency": efficiency,
+        "durability": durability,
+    }
+
+
 # ------------------------------------------------- vitals detail charts --
 # Behind the expandable Vitals boxes; served through the same
 # /api/metric-history endpoint (and cache) as the VO2/endurance tiles.
@@ -2959,4 +3173,5 @@ def get_dashboard_payload(client, username: Optional[str] = None) -> dict:
         "route_log": route_log,
         "training_plan": training_plan_payload,
         "weekly_summary": weekly_summary,
+        "aerobic": build_aerobic(username),
     }

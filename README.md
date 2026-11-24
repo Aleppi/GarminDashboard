@@ -243,6 +243,21 @@ so it survives SSH disconnects. Port-forwarding from the Pi follows the same
 "Exposing this outside your LAN" guidance above — Flask itself still stays
 bound to localhost behind Caddy, only Caddy's 80/443 get forwarded.
 
+## Aerobic Efficiency and Durability
+
+These two tiles are computed here from raw activity streams, not taken from
+Garmin. The method, filters and thresholds are in
+[docs/metrics.md](docs/metrics.md). A background job fills
+`data/aerobic.db`; the dashboard only reads it:
+
+```bash
+.venv/bin/python aerobic_sync.py                     # all accounts; first run backfills 120 days
+.venv/bin/python aerobic_sync.py --user <account> --reprocess
+sudo cp deploy/systemd/trainstate-aerobic.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now trainstate-aerobic.timer
+.venv/bin/python -m unittest discover tests          # method tests
+```
+
 ## Notes on the Garmin API
 
 Garmin Connect's API isn't officially documented; the `garminconnect`

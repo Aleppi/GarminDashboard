@@ -40,7 +40,13 @@ import oauth_store
 import race_days
 import race_courses
 import race_plan
-from dashboard_data import MAX_ACTIVITY_RANGE_DAYS, build_activity_calendar, coach_note_is_stale, get_dashboard_payload
+from dashboard_data import (
+    MAX_ACTIVITY_RANGE_DAYS,
+    build_activity_calendar,
+    build_aerobic_history,
+    coach_note_is_stale,
+    get_dashboard_payload,
+)
 from garmin_client import GarminAuthRequired, GarminUnavailable
 from garmin_tools_bridge import register_garmin_tools
 from mcp_oauth_provider import DashboardOAuthProvider
@@ -126,7 +132,9 @@ def _current_username() -> str:
 def get_training_snapshot() -> dict:
     """Return this account's current training dashboard: readiness, CTL/ATL/TSB
     trend, training load balance, VO2 max, endurance score, recent activities,
-    and any coach note already on file. Call this before suggesting a workout.
+    the dashboard's own Aerobic Efficiency / Durability summary ("aerobic";
+    get_aerobic_efficiency has the full history), and any coach note already
+    on file. Call this before suggesting a workout.
 
     Some activities (last_activity, route_log entries, training_plan sessions'
     completed_activity) may carry a "review_note" field — the athlete's own
@@ -405,6 +413,39 @@ def list_activities(start_date: str, end_date: str) -> dict:
         return {"error": str(exc)}
     race_dates = race_days.race_dates(username)
     return {"days": build_activity_calendar(client, start_date, end_date, race_dates)}
+
+
+@mcp.tool()
+def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bool = False) -> dict:
+    """Aerobic Efficiency ("am I getting fitter?") and Durability ("can I hold
+    output late in long sessions?"), computed by the dashboard itself from
+    raw activity streams — not Garmin's estimates. Use it for questions about
+    aerobic fitness trends, base building, or whether easy volume is working.
+
+    Aerobic Efficiency: only steady 5-min chunks inside the aerobic HR band
+    (65-85% HRmax, capped at LTHR; first 10 min, stops and intervals dropped)
+    count. Each week, a robust HR = a + b*output fit over the trailing 28 days
+    gives output_at_hr_ref (power, grade-adjusted pace, or walking metabolic
+    power at a fixed reference HR — higher = fitter) and hr_at_ref_output
+    (lower = fitter). confidence: high = good fit; medium = fit but
+    extrapolated outside the HR range seen; low = too few/too similar points,
+    median output/HR ratio used instead. Indoor and outdoor are separate
+    series; outdoor weeks carry mean temperature (heat raises HR, so a hot
+    week reads less fit).
+
+    Durability: sessions >= 90 min moving without intervals (VI < 1.10);
+    decoupling_pct = drop in output/HR from first to second half (after the
+    first 10 min). < 5% strong, 5-8% moderate, > 8% low.
+
+    Args:
+        series: one of bike_indoor, bike_outdoor, run_outdoor, run_indoor,
+            run_power_outdoor, run_power_indoor, walk_outdoor; empty = all.
+        weeks: most recent weekly values to return per series.
+        include_chunks: also return every chunk point (date, output, HR, temp).
+    """
+    username = _current_username()
+    return build_aerobic_history(username, series=series or None, include_chunks=include_chunks,
+                                 weeks=max(1, min(int(weeks or 26), 104)))
 
 
 # ------------------------------------------------ raw Garmin Connect tools --

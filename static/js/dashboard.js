@@ -540,6 +540,8 @@
     openMetric = null;
     const panel = $('metricChartPanel');
     if (panel) panel.style.display = 'none';
+    const aePanel = $('aerobicChartPanel');
+    if (aePanel) aePanel.style.display = 'none';
     document.querySelectorAll('.stat-tile.expandable').forEach((el) => {
       el.classList.remove('open');
       el.setAttribute('aria-expanded', 'false');
@@ -558,6 +560,7 @@
       tile.classList.add('open');
       tile.setAttribute('aria-expanded', 'true');
     }
+    if (AE_METRICS[metric]) { openAerobicPanel(metric); return; }
     const panel = $('metricChartPanel');
     panel.style.display = 'block';
 
@@ -737,8 +740,11 @@
       const metric = el.getAttribute('data-metric');
       el.addEventListener('click', () => toggleMetricChart(metric));
       el.addEventListener('keydown', (e) => {
+        if (e.target !== el) return;   // e.g. Enter on a help mark inside the tile
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleMetricChart(metric); }
       });
+      // The "?" inside a tile explains it; tapping it shouldn't also expand the chart.
+      el.querySelectorAll('.help-mark').forEach((h) => h.addEventListener('click', (e) => e.stopPropagation()));
     });
     // Re-render on resize so the 1:1 viewBox keeps matching the container.
     let t = null;
@@ -746,10 +752,373 @@
       if (!openMetric) return;
       clearTimeout(t);
       t = setTimeout(() => {
+        if (AE_METRICS[openMetric]) { renderAerobicPanel(); return; }
         const d = metricHistoryCache[openMetric];
         if (d) renderMetricChart(d);
       }, 180);
     });
+  }
+
+  // --------------------------------------- aerobic efficiency / durability -
+  // Our own metrics, from raw activity streams (docs/metrics.md). The two
+  // tiles render from the payload's compact `aerobic` summary; expanding one
+  // fetches the full weekly history from /api/aerobic (a cache read, no
+  // Garmin call) and keeps it until the next sync changes it.
+  const AE_METRICS = { aerobic: true, durability: true };
+  const AE_LABEL_COLORS = { strong: '#6BA85E', moderate: '#D98A3C', low: '#C0564E' };
+  let aerobicSummary = null;
+  let aerobicHistory = null;
+  let aerobicHistoryPromise = null;
+  const aeSelected = { aerobic: null, durability: null };   // chosen series per panel
+
+  function aeSportKey(series) { return series.replace(/_(indoor|outdoor)$/, ''); }
+
+  function fmtAeOutput(v, unit) {
+    if (typeof v !== 'number') return '—';
+    if (unit === 'm/min') {
+      const sec = Math.round(60000 / v);
+      return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0') + '/km';
+    }
+    if (unit === 'W/kg') return v.toFixed(2) + ' W/kg';
+    return Math.round(v) + ' W';
+  }
+
+  function aeQuantity(unit) {
+    return unit === 'W' ? 'Power' : (unit === 'm/min' ? 'Pace' : 'Metabolic power');
+  }
+
+  function aeBadge(conf) {
+    return conf ? '<span class="ae-badge ' + conf + '">' + conf + '</span>' : '';
+  }
+
+  // Tiny trend line for a tile; null weeks are gaps in time, kept in the x scale.
+  function aeSparkline(values) {
+    const w = 64, h = 18;
+    const pts = values.map((v, i) => [i, v]).filter((p) => typeof p[1] === 'number');
+    if (pts.length < 2) return '';
+    const vs = pts.map((p) => p[1]);
+    let lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
+    if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+    const n = Math.max(1, values.length - 1);
+    const xy = pts.map((p) => [2 + (p[0] / n) * (w - 4), h - 2 - ((p[1] - lo) / (hi - lo)) * (h - 4)]);
+    const last = xy[xy.length - 1];
+    return '<svg class="ae-spark" viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" aria-hidden="true">' +
+      '<path d="M' + xy.map((c) => c[0].toFixed(1) + ',' + c[1].toFixed(1)).join(' L') + '"/>' +
+      '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="2"/></svg>';
+  }
+
+  function renderAerobicTiles(ae) {
+    if (!aerobicSummary || !ae || aerobicSummary.last_sync !== ae.last_sync) {
+      aerobicHistory = null;          // a new sync landed: re-fetch detail on next open
+      aerobicHistoryPromise = null;
+    }
+    aerobicSummary = ae;
+    const grid = $('aerobicStatGrid');
+    if (!ae) { grid.style.display = 'none'; return; }
+    grid.style.display = '';
+    const pending = ae.status === 'pending';
+
+    const eff = ae.efficiency || [];
+    if (eff.length) {
+      const p = eff[0];
+      $('aerobicVal').innerHTML = escapeHtml(p.display) + '<span class="ae-unit"> @ ' + p.hr_ref + ' bpm</span>';
+      let line1 = '';
+      const ch = p.change_6w;
+      if (ch && typeof ch.pct === 'number') {
+        const up = ch.abs > 0;
+        line1 = '<span class="ae-chg ' + (up ? 'up' : 'down') + '">' + (up ? '▲ ' : '▼ ') + escapeHtml(ch.display) +
+                '</span> <span class="ae-dim">vs 6 wk ago</span>';
+      } else {
+        line1 = '<span class="ae-dim">' + (p.stale ? 'as of ' + escapeHtml(fmtShortDate(p.as_of)) : 'trend after 6 weeks of data') + '</span>';
+      }
+      $('aerobicLabel').innerHTML =
+        '<div class="ae-line">' + line1 + aeSparkline(p.spark || []) + '</div>' +
+        '<div class="ae-line">' + escapeHtml(p.label) + ' · ' + (p.indoor ? 'indoor' : 'outdoor') + ' ' +
+        aeBadge(p.confidence) + ' <span class="ae-dim">' + p.n + ' pts</span></div>';
+    } else {
+      $('aerobicVal').textContent = '—';
+      $('aerobicLabel').textContent = pending
+        ? 'Computing from your recent activities — check back soon.'
+        : 'Do steady efforts of 10+ min in your aerobic zone to unlock this.';
+    }
+
+    const dur = ae.durability || [];
+    if (dur.length) {
+      const last = dur[0].last;
+      const color = AE_LABEL_COLORS[last.label] || 'inherit';
+      $('durabilityVal').innerHTML = '<span style="color:' + color + '">' + last.decoupling_pct.toFixed(1) + '%</span>' +
+        '<span class="ae-unit"> ' + escapeHtml(last.label) + '</span>';
+      const bars = dur[0].sessions.slice().reverse().map((s) =>
+        '<span class="ae-minibar" title="' + escapeHtml(fmtShortDate(s.date) + ': ' + s.decoupling_pct.toFixed(1) + '%') +
+        '" style="height:' + Math.max(2, Math.min(18, Math.abs(s.decoupling_pct) * 1.5)).toFixed(0) +
+        'px;background:' + (AE_LABEL_COLORS[s.label] || 'var(--ink-faint)') + '"></span>').join('');
+      $('durabilityLabel').innerHTML =
+        '<div class="ae-line"><span class="ae-dim">decoupling, last long session</span><span class="ae-minibars">' + bars + '</span></div>' +
+        '<div class="ae-line">' + escapeHtml(last.name || dur[0].label) + ' · ' + escapeHtml(fmtShortDate(last.date)) + '</div>';
+    } else {
+      $('durabilityVal').textContent = '—';
+      $('durabilityLabel').textContent = pending
+        ? 'Computing from your recent activities — check back soon.'
+        : 'Do a steady ride, run or hike of 90+ min (no intervals) to unlock this.';
+    }
+
+    if (AE_METRICS[openMetric] && aerobicHistory === null) openAerobicPanel(openMetric);
+  }
+
+  function ensureAerobicHistory() {
+    if (aerobicHistory) return Promise.resolve(aerobicHistory);
+    if (!aerobicHistoryPromise) {
+      aerobicHistoryPromise = fetch('/api/aerobic')
+        .then((r) => r.json())
+        .then((d) => { aerobicHistory = d; return d; })
+        .catch((e) => { aerobicHistoryPromise = null; throw e; });
+    }
+    return aerobicHistoryPromise;
+  }
+
+  function openAerobicPanel(metric) {
+    $('aerobicChartPanel').style.display = 'block';
+    if (!aerobicHistory) {
+      setText('aerobicChartTitle', 'Loading…');
+      setText('aerobicChartMeta', '');
+      $('aerobicControls').innerHTML = '';
+      $('aerobicChartPlot').innerHTML = '';
+      $('aerobicFoot').innerHTML = '';
+    }
+    ensureAerobicHistory()
+      .then(() => { if (openMetric === metric) renderAerobicPanel(); })
+      .catch(() => {
+        if (openMetric !== metric) return;
+        setText('aerobicChartTitle', 'Could not load history');
+        $('aerobicChartPlot').innerHTML = '<div class="mc-empty">Try again in a moment.</div>';
+      });
+  }
+
+  function renderAerobicPanel() {
+    if (!aerobicHistory || !AE_METRICS[openMetric]) return;
+    $('aerobicChartTip').style.display = 'none';
+    if (openMetric === 'aerobic') renderEfficiencyPanel(aerobicHistory);
+    else renderDurabilityPanel(aerobicHistory);
+  }
+
+  // Sport tabs (only sports with data) + an indoor/outdoor toggle when the
+  // chosen sport has both. `candidates` are series entries from /api/aerobic.
+  function aeControls(candidates, panelKey) {
+    const current = candidates.find((s) => s.series === aeSelected[panelKey]) || candidates[0];
+    aeSelected[panelKey] = current.series;
+    const sports = [];
+    candidates.forEach((s) => { const k = aeSportKey(s.series); if (!sports.some((x) => x.key === k)) sports.push({ key: k, label: s.label }); });
+    const curSport = aeSportKey(current.series);
+    let html = '';
+    if (sports.length > 1) {
+      html += '<div class="ae-seg" role="tablist">' + sports.map((sp) =>
+        '<button type="button" role="tab" data-sport="' + sp.key + '" class="' + (sp.key === curSport ? 'on' : '') +
+        '" aria-selected="' + (sp.key === curSport) + '">' + escapeHtml(sp.label) + '</button>').join('') + '</div>';
+    }
+    const variants = candidates.filter((s) => aeSportKey(s.series) === curSport);
+    if (variants.length > 1) {
+      html += '<div class="ae-seg">' + variants.map((v) =>
+        '<button type="button" data-series="' + v.series + '" class="' + (v.series === current.series ? 'on' : '') + '">' +
+        (v.indoor ? 'Indoor' : 'Outdoor') + '</button>').join('') + '</div>';
+    } else {
+      html += '<span class="ae-dim ae-io-note">' + (current.indoor ? 'Indoor' : 'Outdoor') + '</span>';
+    }
+    const box = $('aerobicControls');
+    box.innerHTML = html;
+    box.querySelectorAll('button[data-sport]').forEach((b) => b.addEventListener('click', () => {
+      const k = b.getAttribute('data-sport');
+      const sameIo = candidates.find((s) => aeSportKey(s.series) === k && s.indoor === current.indoor);
+      aeSelected[panelKey] = (sameIo || candidates.find((s) => aeSportKey(s.series) === k)).series;
+      renderAerobicPanel();
+    }));
+    box.querySelectorAll('button[data-series]').forEach((b) => b.addEventListener('click', () => {
+      aeSelected[panelKey] = b.getAttribute('data-series');
+      renderAerobicPanel();
+    }));
+    return current;
+  }
+
+  function aeBindTips(body, tip, coords, htmlFor) {
+    const hide = () => { tip.style.display = 'none'; };
+    body.querySelectorAll('.mc-hit').forEach((hit) => {
+      const i = parseInt(hit.getAttribute('data-i'), 10);
+      hit.addEventListener('mouseenter', () => {
+        tip.innerHTML = htmlFor(i);
+        tip.style.display = 'block';
+        const svgEl = body.querySelector('svg');
+        const scale = svgEl.clientWidth / svgEl.viewBox.baseVal.width || 1;
+        const x = coords[i][0] * scale, y = coords[i][1] * scale;
+        let left = x + 12;
+        if (left + tip.offsetWidth > body.clientWidth) left = x - tip.offsetWidth - 12;
+        tip.style.left = Math.max(0, left) + 'px';
+        tip.style.top = Math.max(0, y - tip.offsetHeight - 8) + 'px';
+      });
+      hit.addEventListener('mouseleave', hide);
+    });
+  }
+
+  function aeEmpty(title, message) {
+    setText('aerobicChartTitle', title);
+    setText('aerobicChartMeta', '');
+    $('aerobicControls').innerHTML = '';
+    $('aerobicChartPlot').innerHTML = '<div class="mc-empty">' + escapeHtml(message) + '</div>';
+    $('aerobicFoot').innerHTML = '';
+  }
+
+  function renderEfficiencyPanel(d) {
+    const candidates = (d.series || []).filter((s) => (s.weeks || []).some((w) => typeof w.output_at_hr_ref === 'number'));
+    if (!candidates.length) {
+      aeEmpty('Aerobic Efficiency', d.status === 'pending'
+        ? 'Your activities are still being analysed — check back soon.'
+        : 'Do steady efforts of 10+ min in your aerobic zone to unlock this. Rides need a power meter; runs and hikes need GPS.');
+      return;
+    }
+    if (!aeSelected.aerobic && aerobicSummary && aerobicSummary.efficiency && aerobicSummary.efficiency.length) {
+      aeSelected.aerobic = aerobicSummary.efficiency[0].series;
+    }
+    const s = aeControls(candidates, 'aerobic');
+    const unit = s.unit;
+    setText('aerobicChartTitle', aeQuantity(unit) + ' at ' + s.hr_ref + ' bpm · ' + s.label + ' ' + (s.indoor ? 'indoor' : 'outdoor'));
+    const ch = s.change_6w;
+    setText('aerobicChartMeta', 'rolling 28 days, weekly' + (ch && ch.display ? ' · 6 wk: ' + ch.display : ''));
+
+    const weeks = s.weeks.filter((w) => typeof w.output_at_hr_ref === 'number');
+    const body = $('aerobicChartPlot');
+    const W = Math.max(320, body.clientWidth || 600), H = 200;
+    const padL = 58, padR = 14, padT = 12, padB = 24;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const vals = weeks.map((w) => w.output_at_hr_ref);
+    let lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    const pad = (hi - lo) * 0.15 || Math.max(1, hi * 0.04);
+    lo -= pad; hi += pad;
+    // x by real date so a gap with no steady sessions reads as a gap.
+    const t = (w) => new Date(w.week_end + 'T00:00:00').getTime();
+    const t0 = t(weeks[0]), t1 = t(weeks[weeks.length - 1]);
+    const xAt = (w) => (t1 === t0 ? padL + plotW / 2 : padL + ((t(w) - t0) / (t1 - t0)) * plotW);
+    const yAt = (v) => padT + plotH - ((v - lo) / (hi - lo)) * plotH;
+
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="Aerobic efficiency history">';
+    for (let k = 0; k <= 2; k++) {
+      const v = lo + ((hi - lo) * k) / 2, y = yAt(v);
+      svg += '<line class="mc-gridline" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke-dasharray="3 4"/>';
+      svg += '<text class="mc-axis" x="' + (padL - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + escapeHtml(fmtAeOutput(v, unit)) + '</text>';
+    }
+    svg += '<text class="mc-axis" x="' + padL + '" y="' + (H - 6) + '">' + escapeHtml(fmtShortDate(weeks[0].week_end)) + '</text>';
+    if (weeks.length > 1) {
+      svg += '<text class="mc-axis" x="' + (W - padR) + '" y="' + (H - 6) + '" text-anchor="end">' + escapeHtml(fmtShortDate(weeks[weeks.length - 1].week_end)) + '</text>';
+    }
+    const coords = weeks.map((w) => [xAt(w), yAt(w.output_at_hr_ref)]);
+    if (coords.length > 1) {
+      svg += '<path class="mc-line" d="M' + coords.map((c) => c[0].toFixed(1) + ',' + c[1].toFixed(1)).join(' L') + '"/>';
+    }
+    weeks.forEach((w, i) => {
+      const c = coords[i], last = i === weeks.length - 1;
+      svg += '<circle class="ae-dot ' + (w.confidence || 'low') + (last ? ' last' : '') + '" cx="' + c[0].toFixed(1) +
+             '" cy="' + c[1].toFixed(1) + '" r="' + (last ? 4.5 : 3.2) + '"/>';
+    });
+    coords.forEach((c, i) => {
+      svg += '<circle class="mc-hit" cx="' + c[0].toFixed(1) + '" cy="' + c[1].toFixed(1) + '" r="11" fill="transparent" data-i="' + i + '"/>';
+    });
+    body.innerHTML = svg + '</svg>';
+    aeBindTips(body, $('aerobicChartTip'), coords, (i) => {
+      const w = weeks[i];
+      return '<b>' + escapeHtml(fmtAeOutput(w.output_at_hr_ref, unit)) + '</b> @ ' + s.hr_ref + ' bpm' +
+        (typeof w.hr_at_ref_output === 'number' ? '<br>HR at ' + escapeHtml(fmtAeOutput(s.ref_output, unit)) + ': ' + w.hr_at_ref_output.toFixed(0) + ' bpm' : '') +
+        '<br>' + w.n + ' pts · ' + escapeHtml(w.confidence || '') + ' confidence' +
+        (typeof w.mean_temp_c === 'number' ? '<br>avg ' + w.mean_temp_c.toFixed(0) + ' °C' + (w.hot_points ? ' (' + w.hot_points + ' hot pts count half)' : '') : '') +
+        '<span class="mc-tip-date">28 days to ' + escapeHtml(fmtShortDate(w.week_end)) + '</span>';
+    });
+
+    const latest = s.latest || {};
+    const refVal = unit === 'm/min' ? fmtAeOutput(s.ref_output, unit).replace('/km', '') :
+      (typeof s.ref_output === 'number' ? (unit === 'W/kg' ? s.ref_output.toFixed(2) : Math.round(s.ref_output)) : '');
+    const unitHint = unit === 'm/min' ? 'min/km' : unit;
+    let foot = '<div class="ae-foot-row"><span>HR at <b>' + escapeHtml(fmtAeOutput(s.ref_output, unit)) + '</b>: <b>' +
+      (typeof latest.hr_at_ref_output === 'number' ? latest.hr_at_ref_output.toFixed(0) + ' bpm' : '—') + '</b> ' +
+      aeBadge(latest.confidence) + '</span>' +
+      '<form class="ae-pin" id="aeRefForm"><label>Reference <input id="aeRefInput" type="text" inputmode="decimal" value="' +
+      escapeHtml(String(refVal)) + '" aria-label="Reference output in ' + unitHint + '"> ' + escapeHtml(unitHint) + '</label>' +
+      '<button type="submit">Set</button>' + (s.ref_output_pinned ? '<button type="button" id="aeRefReset">Auto</button>' : '') + '</form></div>';
+    foot += '<div class="ae-dim">Lower HR at the same output, or more output at ' + s.hr_ref + ' bpm, means fitter. ' +
+      (s.indoor ? 'Indoor sessions have no temperature, so heat isn\'t accounted for.'
+                : 'Outdoor points above 25 °C count half (heat raises HR).') +
+      ' <span class="ae-key"><i class="ae-dot-k high"></i>high <i class="ae-dot-k medium"></i>medium <i class="ae-dot-k low"></i>low confidence</span></div>';
+    $('aerobicFoot').innerHTML = foot;
+    const form = $('aeRefForm');
+    const post = (value) => fetch('/api/aerobic/ref-output', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ series: s.series, value: value }),
+    }).then((r) => r.json()).then((res) => {
+      if (res.error) { alert(res.error); return; }
+      aerobicHistory = null; aerobicHistoryPromise = null;
+      openAerobicPanel('aerobic');
+    });
+    form.addEventListener('submit', (e) => { e.preventDefault(); post($('aeRefInput').value.trim()); });
+    const reset = $('aeRefReset');
+    if (reset) reset.addEventListener('click', () => post(null));
+  }
+
+  function renderDurabilityPanel(d) {
+    const candidates = (d.series || []).filter((s) => (s.durability || []).length);
+    if (!candidates.length) {
+      aeEmpty('Durability', d.status === 'pending'
+        ? 'Your activities are still being analysed — check back soon.'
+        : 'Do a steady ride, run or hike of 90+ min (no intervals) to unlock this.');
+      return;
+    }
+    if (!aeSelected.durability && aerobicSummary && aerobicSummary.durability && aerobicSummary.durability.length) {
+      aeSelected.durability = aerobicSummary.durability[0].series;
+    }
+    const s = aeControls(candidates, 'durability');
+    const sessions = s.durability.slice().reverse();     // oldest left
+    setText('aerobicChartTitle', 'Durability · ' + s.label + ' ' + (s.indoor ? 'indoor' : 'outdoor'));
+    setText('aerobicChartMeta', 'last ' + sessions.length + ' long session' + (sessions.length === 1 ? '' : 's'));
+
+    const body = $('aerobicChartPlot');
+    const W = Math.max(320, body.clientWidth || 600), H = 190;
+    const padL = 36, padR = 14, padT = 12, padB = 24;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const vals = sessions.map((x) => x.decoupling_pct);
+    const hi = Math.max(10, Math.max.apply(null, vals) + 1);
+    const lo = Math.min(0, Math.min.apply(null, vals) - 1);
+    const yAt = (v) => padT + plotH - ((v - lo) / (hi - lo)) * plotH;
+    const slot = plotW / Math.max(sessions.length, 4);
+    const bw = Math.min(34, slot * 0.6);
+
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="Durability per session">';
+    [[0, 'mc-gridline', '0%'], [5, 'ae-band strong', '5%'], [8, 'ae-band low', '8%']].forEach((b) => {
+      const y = yAt(b[0]);
+      svg += '<line class="' + b[1] + '" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '"' + (b[0] ? ' stroke-dasharray="4 4"' : '') + '/>';
+      svg += '<text class="mc-axis" x="' + (padL - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + b[2] + '</text>';
+    });
+    const coords = [];
+    sessions.forEach((x, i) => {
+      const cx = padL + slot * i + slot / 2;
+      const y0 = yAt(0), y1 = yAt(x.decoupling_pct);
+      const top = Math.min(y0, y1), h = Math.max(1.5, Math.abs(y1 - y0));
+      svg += '<rect x="' + (cx - bw / 2).toFixed(1) + '" y="' + top.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) +
+             '" rx="2" fill="' + (AE_LABEL_COLORS[x.label] || 'var(--ink-faint)') + '" opacity="0.85"/>';
+      svg += '<text class="mc-axis" x="' + cx.toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">' + escapeHtml(fmtShortDate(x.date)) + '</text>';
+      coords.push([cx, top]);
+    });
+    sessions.forEach((x, i) => {
+      svg += '<rect class="mc-hit" x="' + (coords[i][0] - slot / 2).toFixed(1) + '" y="' + padT + '" width="' + slot.toFixed(1) +
+             '" height="' + plotH + '" fill="transparent" data-i="' + i + '"/>';
+    });
+    body.innerHTML = svg + '</svg>';
+    aeBindTips(body, $('aerobicChartTip'), coords, (i) => {
+      const x = sessions[i];
+      return '<b>' + x.decoupling_pct.toFixed(1) + '%</b> ' + escapeHtml(x.label) +
+        '<br>' + escapeHtml(x.name || '') + ' · ' + x.moving_min + ' min' +
+        '<br>1st half: ' + escapeHtml(x.first_half.output || '—') + ' @ ' + (x.first_half.hr || 0).toFixed(0) + ' bpm' +
+        '<br>2nd half: ' + escapeHtml(x.second_half.output || '—') + ' @ ' + (x.second_half.hr || 0).toFixed(0) + ' bpm' +
+        (typeof x.temp_c === 'number' ? '<br>' + x.temp_c.toFixed(0) + ' °C' : '') +
+        '<span class="mc-tip-date">' + escapeHtml(fmtShortDate(x.date)) + '</span>';
+    });
+    $('aerobicFoot').innerHTML = '<div class="ae-dim">Drop in output per heartbeat from the first to the second half, after the first 10 min. ' +
+      '<span style="color:' + AE_LABEL_COLORS.strong + '">&lt; 5% strong</span> · <span style="color:' + AE_LABEL_COLORS.moderate +
+      '">5–8% moderate</span> · <span style="color:' + AE_LABEL_COLORS.low + '">&gt; 8% low</span>. ' +
+      (s.indoor ? 'Indoor: no temperature recorded.' : 'Heat raises HR late in a session, so hot days read worse.') + '</div>';
   }
 
   // ----------------------------------------------------------------- vitals -
@@ -2266,6 +2635,7 @@
     if (currentView === 'dashboard') renderRidgeChart(data.ridge_chart);
     else pendingRidge = data.ridge_chart;
     renderTrainingLoad(data.training_load);
+    renderAerobicTiles(data.aerobic);
     renderVitals(data.vitals);
     renderLastWaypoint(data.last_activity);
     renderNextWaypoint(data.next_waypoint, data.coach_note);

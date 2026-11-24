@@ -1,0 +1,13 @@
+[Unit]
+Description=TrainState aerobic efficiency/durability sync (new activities -> data/aerobic.db)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aleppi
+WorkingDirectory=/home/aleppi/GarminDashboard
+ExecStart=/home/aleppi/GarminDashboard/.venv/bin/python aerobic_sync.py
+Nice=10
+# A first-time 120-day backfill takes a few minutes per account.
+TimeoutStartSec=1800

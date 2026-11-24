@@ -119,6 +119,27 @@
         </div>
       </div>
 
+      <!-- Our own metrics, from raw activity streams (aerobic_metrics.py,
+           docs/metrics.md) — not Garmin estimates. Same expandable-tile
+           pattern as the row above, with their own panel below them. -->
+      <div class="stat-grid two" id="aerobicStatGrid">
+        <div class="stat-tile expandable" id="aerobicTile" data-metric="aerobic" role="button" tabindex="0" aria-expanded="false" aria-controls="aerobicChartPanel"><div class="v" id="aerobicVal">—</div><div class="l">Aerobic Efficiency<span class="help-mark" tabindex="0" data-tooltip="Output per heartbeat at steady aerobic effort. Higher = fitter. Only steady segments in your aerobic zone are used. Shown as your output (power, grade-adjusted pace, or hiking metabolic power) at a fixed reference heart rate, from a rolling 28-day window.">?</span><span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="aerobicLabel"></div></div>
+        <div class="stat-tile expandable" id="durabilityTile" data-metric="durability" role="button" tabindex="0" aria-expanded="false" aria-controls="aerobicChartPanel"><div class="v" id="durabilityVal">—</div><div class="l">Durability<span class="help-mark" tabindex="0" data-tooltip="How much your output per heartbeat drops in the second half of long sessions. Under 5% indicates a strong aerobic base. Uses steady sessions of 90+ min; interval sessions are left out.">?</span><span class="expand-caret" aria-hidden="true">▾</span></div><div class="d" id="durabilityLabel"></div></div>
+      </div>
+
+      <div class="metric-chart" id="aerobicChartPanel" style="display:none;">
+        <div class="mc-head">
+          <span class="mc-title" id="aerobicChartTitle"></span>
+          <span class="mc-meta" id="aerobicChartMeta"></span>
+        </div>
+        <div class="ae-controls" id="aerobicControls"></div>
+        <div class="mc-body">
+          <div id="aerobicChartPlot"></div>
+          <div class="mc-tip" id="aerobicChartTip" style="display:none;"></div>
+        </div>
+        <div class="ae-foot" id="aerobicFoot"></div>
+      </div>
+
       <table class="predict" id="predictTable">
         <tr><th>5K</th><td id="predict5k">—</td></tr>
         <tr><th>10K</th><td id="predict10k">—</td></tr>
@@ -267,7 +288,7 @@
   </div><!-- /viewRaces -->
 
   <footer>
-    Source: Garmin Connect. Race predictions, VO2 max, endurance/hill scores per Garmin's own models.
+    Source: Garmin Connect. Race predictions, VO2 max, endurance/hill scores per Garmin's own models; Aerobic Efficiency and Durability are computed here from raw activity streams.
     <div class="refresh-box">
       <span class="refresh-label" id="lastUpdatedLabel">Not loaded yet</span>
       <button id="refreshBtn" type="button">Refresh</button>

@@ -1,0 +1,10 @@
+[Unit]
+Description=Process new activities for Aerobic Efficiency / Durability every 30 min
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
