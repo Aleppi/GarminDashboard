@@ -1053,7 +1053,11 @@
       '<span>: <b>' + (typeof latest.hr_at_ref_output === 'number' ? latest.hr_at_ref_output.toFixed(0) + ' bpm' : '—') + '</b> ' +
       aeBadge(latest.confidence) + '</span>' +
       '<button type="submit">Update</button>' +
-      (s.ref_output_pinned ? '<button type="button" id="aeRefReset" title="Go back to your typical recent output">Auto</button>' : '') +
+      (s.ref_output_pinned ? '<button type="button" id="aeRefReset" class="ae-icon-btn" title="Reset to your typical recent ' +
+        (unit === 'm/min' ? 'pace' : 'output') + '" aria-label="Reset to your typical recent ' + (unit === 'm/min' ? 'pace' : 'output') + '">' +
+        '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.2 6.2A5 5 0 1 1 3 9.6" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M2.4 2.6v3.9h3.9" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : '') +
       '</form></div>';
     foot += '<div class="ae-dim">Type any ' + (unit === 'm/min' ? 'pace' : 'output') + ' to see your HR at it' +
       (s.ref_output_pinned ? '' : ' (default: your typical recent ' + (unit === 'm/min' ? 'pace' : 'output') + ')') + '. ' +

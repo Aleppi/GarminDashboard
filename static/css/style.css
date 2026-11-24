@@ -308,6 +308,7 @@
   .ae-pin button{background:none;border:1px solid var(--line);border-radius:3px;color:var(--ink-dim);cursor:pointer;
     font-family:var(--font-mono);font-size:11px;padding:3px 8px;}
   .ae-pin button:hover{border-color:var(--gold);color:var(--gold);}
+  .ae-pin .ae-icon-btn{display:inline-flex;align-items:center;justify-content:center;padding:3px 5px;line-height:0;}
   .ae-key{white-space:nowrap;}
   .ae-dot-k{display:inline-block;width:7px;height:7px;border-radius:50%;border:1.5px solid var(--gold);margin:0 3px 0 6px;vertical-align:-1px;}
   .ae-dot-k.high{background:var(--gold);}
