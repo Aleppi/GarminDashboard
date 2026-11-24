@@ -11,6 +11,7 @@ fetched twice unless aerobic_metrics.ALGO_VERSION is bumped.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
@@ -73,7 +74,10 @@ _ADDED_COLUMNS = {
                  "hr1_at_ref": "REAL", "hr2_at_ref": "REAL", "np1": "REAL", "np2": "REAL",
                  "vi1": "REAL", "vi2": "REAL", "exclude_reason": "TEXT"},
     "weekly": {"fit_issue": "TEXT", "raw_b": "REAL", "mad": "REAL"},
-    "user_ref": {"hr_ref_source": "TEXT", "easy_hr": "REAL", "easy_activities": "INTEGER"},
+    "user_ref": {"hr_ref_source": "TEXT", "easy_hr": "REAL", "easy_activities": "INTEGER", "easy_set_on": "TEXT",
+                 "ftp": "REAL"},
+    "chunks": {"avg_output": "REAL"},
+    "processed": {"chunk_reasons": "TEXT"},
 }
 _migrated: set[str] = set()
 
@@ -131,8 +135,10 @@ def save_activity(username: str, activity_id: str, day: str, type_key: str, name
         for key, s in series.items():
             temp = None if key.endswith("_indoor") else temp_c
             conn.executemany(
-                "INSERT INTO chunks (username, activity_id, series, t_start, day, output, hr, temp_c) VALUES (?,?,?,?,?,?,?,?)",
-                [(username, aid, key, p["t_start"], day, p["output"], p["hr"], temp) for p in s["points"]],
+                "INSERT INTO chunks (username, activity_id, series, t_start, day, output, hr, temp_c, avg_output) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                [(username, aid, key, p["t_start"], day, p["output"], p["hr"], temp, p.get("avg_output"))
+                 for p in s["points"]],
             )
             d = s.get("durability")
             if d:
@@ -152,12 +158,14 @@ def save_activity(username: str, activity_id: str, day: str, type_key: str, name
         if not reason and status == "no_steady_data":
             reason = "; ".join(f"{k}: {s.get('durability_reason')}" for k, s in series.items())
         conn.execute(
-            """INSERT INTO processed (username, activity_id, day, type_key, status, reason, algo_version, processed_at)
+            """INSERT INTO processed (username, activity_id, day, type_key, status, reason, algo_version, processed_at,
+                                      chunk_reasons)
                VALUES (?,?,?,?,?,?,?,?)
                ON CONFLICT(username, activity_id) DO UPDATE SET day = excluded.day, type_key = excluded.type_key,
                status = excluded.status, reason = excluded.reason, algo_version = excluded.algo_version,
                processed_at = excluded.processed_at""",
-            (username, aid, day, type_key, status, reason, algo_version, time.time()),
+            (username, aid, day, type_key, status, reason, algo_version, time.time(),
+             json.dumps({k: s.get("reasons") or {} for k, s in series.items()}) if series else None),
         )
         conn.commit()
 
@@ -167,7 +175,7 @@ def mark_skipped(username: str, activity_id: str, day: str, type_key: str, reaso
 
 
 def chunk_points(username: str, series: Optional[str] = None, since_day: Optional[str] = None) -> list[dict]:
-    sql = "SELECT activity_id, series, t_start, day, output, hr, temp_c FROM chunks WHERE username = ?"
+    sql = "SELECT activity_id, series, t_start, day, output, hr, temp_c, avg_output FROM chunks WHERE username = ?"
     args: list[Any] = [username]
     if series:
         sql += " AND series = ?"
@@ -229,17 +237,29 @@ def save_ref(username: str, zone_sport: str, hr_max: float, hr_rest: float, lthr
         conn.commit()
 
 
-def set_easy_ref(username: str, zone_sport: str, hr_ref: Optional[int], easy_hr: Optional[float],
-                 n_activities: int, hr_ref_source: str) -> None:
-    """Record the measured easy-session HR; hr_ref=None leaves the reference as is."""
+def freeze_easy_ref(username: str, zone_sport: str, hr_ref: int, easy_hr: float, n_activities: int,
+                    on_day: str) -> None:
+    """Store a measured easy-session reference HR; it stays until HRmax /
+    resting HR change or the user resets it (reset_easy_ref)."""
     with _connect() as conn:
-        if hr_ref is None:
-            conn.execute("UPDATE user_ref SET easy_hr = ?, easy_activities = ? WHERE username = ? AND zone_sport = ?",
-                         (easy_hr, n_activities, username, zone_sport))
-        else:
-            conn.execute("""UPDATE user_ref SET hr_ref = ?, hr_ref_source = ?, easy_hr = ?, easy_activities = ?,
-                            updated_at = ? WHERE username = ? AND zone_sport = ?""",
-                         (hr_ref, hr_ref_source, easy_hr, n_activities, time.time(), username, zone_sport))
+        conn.execute("""UPDATE user_ref SET hr_ref = ?, hr_ref_source = 'easy_sessions', easy_hr = ?,
+                        easy_activities = ?, easy_set_on = ?, updated_at = ? WHERE username = ? AND zone_sport = ?""",
+                     (hr_ref, easy_hr, n_activities, on_day, time.time(), username, zone_sport))
+        conn.commit()
+
+
+def reset_easy_ref(username: str, zone_sport: str, formula_hr_ref: int) -> None:
+    """Back to the HR-reserve formula; the next rebuild measures (and freezes) it again."""
+    with _connect() as conn:
+        conn.execute("""UPDATE user_ref SET hr_ref = ?, hr_ref_source = 'hr_reserve', easy_hr = NULL,
+                        easy_activities = NULL, easy_set_on = NULL, updated_at = ? WHERE username = ? AND zone_sport = ?""",
+                     (formula_hr_ref, time.time(), username, zone_sport))
+        conn.commit()
+
+
+def set_ftp(username: str, ftp: Optional[float]) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE user_ref SET ftp = ? WHERE username = ? AND zone_sport = 'CYCLING'", (ftp, username))
         conn.commit()
 
 

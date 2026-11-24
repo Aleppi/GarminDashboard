@@ -17,6 +17,7 @@ points into "output at a reference HR".
 
 from __future__ import annotations
 
+import bisect
 import math
 import statistics
 from dataclasses import dataclass, field
@@ -25,13 +26,14 @@ from typing import Any, Iterable, Optional
 
 # Bump whenever a change below would alter cached results: the sync job
 # reprocesses every activity whose stored algo_version is older.
-ALGO_VERSION = 6  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
+ALGO_VERSION = 7  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
                   # 3: durability by per-half regression (NP-EF fallback), outdoor-bike VI 1.20
                   # 4: outdoor-bike chunk VI 1.10, per-half VI check on NP-EF, ski touring
                   #    (uphill only) and snowshoeing in walk_outdoor
                   # 5: chunk HR trend (|slope| <= 1 bpm/min) instead of HR spread; walking HR
                   #    floor 30% HRR
                   # 6: HR trend limit 2 bpm/min, walking output CV limit 15%
+                  # 7: chunk output = NP for power series; post-effort chunk exclusion
 
 WARMUP_S = 600                 # dropped from the start of each activity (HR settling)
 CHUNK_S = 300                  # one data point per 5 min of steady effort
@@ -56,6 +58,13 @@ CHUNK_CV_MAX = 0.05            # speed-based: CV of the 30 s-smoothed output
 # steady effort: 5% rejected every hike chunk; 15% keeps the steady stretches.
 CHUNK_CV_MAX_BY_SPORT = {"walking": 0.15}
 CHUNK_COVERAGE_MIN = 0.95      # share of seconds with both HR and output present
+# Post-effort exclusion: HR stays raised for minutes after a hard effort,
+# so a "steady" chunk right after one reads too much HR for its output
+# (e.g. recoveries in an interval ride). A chunk is dropped when an effort
+# falls in the POST_EFFORT_S before it starts, or inside it: 30 s rolling
+# power > POST_EFFORT_FTP_FRAC x FTP (power + FTP known), or HR > LTHR.
+POST_EFFORT_S = 300
+POST_EFFORT_FTP_FRAC = 1.20
 SMOOTH_S = 30                  # rolling window for NP / CV
 GRADE_WINDOW_M = 25.0          # horizontal distance a gradient is measured over
 GRADE_MIN_SPAN_M = 5.0         # below this the athlete is basically stationary: grade 0
@@ -137,7 +146,7 @@ REF_HR_FRACTION_BY_SPORT = {"walking": 0.40}
 # runs, else the % formula; only moves when it shifts >= EASY_REF_UPDATE_BPM
 # (every week of history is re-read at the same reference, so a move only
 # relabels the line, but it shouldn't flicker).
-EASY_REF_SPORTS = {"running"}
+EASY_REF_SPORTS = {"running", "walking"}
 EASY_REF_DAYS = 180
 EASY_REF_MIN_ACTIVITIES = 3
 EASY_REF_UPDATE_BPM = 3
@@ -525,16 +534,40 @@ def evaluate_chunk(hr: list[Optional[float]], out: list[Optional[float]], signal
         vi = variability_index(outs)
         if vi is None or vi > vi_max:
             return None, "variable_output"
-    else:
-        cv = smoothed_cv(outs)
-        if cv is None or cv >= cv_max:
-            return None, "variable_output"
-    return {"output": mean_out, "hr": mean_hr}, "ok"
+        # Normalized power: at the same average, a chunk with surges costs
+        # more than a smooth one (outdoor VI 1.03-1.10 vs ~1.00 on the
+        # trainer), and NP tracks that cost. avg_output keeps the plain mean.
+        return {"output": normalized_output(outs), "avg_output": mean_out, "hr": mean_hr}, "ok"
+    cv = smoothed_cv(outs)
+    if cv is None or cv >= cv_max:
+        return None, "variable_output"
+    return {"output": mean_out, "avg_output": mean_out, "hr": mean_hr}, "ok"
+
+
+def effort_times(grid: Grid, series: str, lthr: Optional[float], ftp: Optional[float]) -> list[int]:
+    """Timestamps (sorted) of hard-effort seconds: 30 s rolling power above
+    POST_EFFORT_FTP_FRAC x FTP (power series with an FTP), or HR above LTHR."""
+    times: set[int] = set()
+    if ftp and SERIES[series]["signal"] == "power":
+        p = [v if v is not None else 0.0 for v in grid.power]
+        limit = POST_EFFORT_FTP_FRAC * ftp
+        if len(p) >= SMOOTH_S:
+            for k, v in enumerate(rolling_mean_trailing(p, SMOOTH_S)):
+                if v > limit:
+                    times.add(grid.t[k + SMOOTH_S - 1])
+    if lthr:
+        times.update(t for t, h in zip(grid.t, grid.hr) if h is not None and h > lthr)
+    return sorted(times)
+
+
+def _after_effort(efforts: list[int], t_start: int, t_end: int) -> bool:
+    k = bisect.bisect_left(efforts, t_start - POST_EFFORT_S)
+    return k < len(efforts) and efforts[k] <= t_end
 
 
 def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
                   out: Optional[list[Optional[float]]] = None,
-                  hr_rest: Optional[float] = None) -> tuple[list[dict], dict]:
+                  hr_rest: Optional[float] = None, ftp: Optional[float] = None) -> tuple[list[dict], dict]:
     """Valid 5-min chunk points for one series, plus a count of why the
     other chunks were rejected (useful for the "why no data?" question)."""
     if out is None:
@@ -545,6 +578,7 @@ def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
     signal = SERIES[series]["signal"]
     vi_max = CHUNK_VI_MAX_BY_SERIES.get(series, CHUNK_VI_MAX)
     cv_max = CHUNK_CV_MAX_BY_SPORT.get(SERIES[series]["sport"], CHUNK_CV_MAX)
+    efforts = effort_times(grid, series, lthr, ftp)
 
     segments: list[list[int]] = []
     for p, i in enumerate(idx):
@@ -559,6 +593,8 @@ def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
         for c in range(len(seg) // CHUNK_S):
             sl = seg[c * CHUNK_S:(c + 1) * CHUNK_S]
             point, reason = evaluate_chunk([grid.hr[i] for i in sl], [out[i] for i in sl], signal, band, vi_max, cv_max)
+            if point is not None and _after_effort(efforts, grid.t[sl[0]], grid.t[sl[-1]]):
+                point, reason = None, "post_effort"
             reasons[reason] = reasons.get(reason, 0) + 1
             if point is not None:
                 point["t_start"] = grid.t[sl[0]]
@@ -754,7 +790,8 @@ def analyze_activity(details: dict, type_key: str, zones: dict[str, dict], inter
             result["series"][key] = {"points": [], "durability": None, "durability_reason": "no_hr_max", "reasons": {}}
             continue
         out = output_signal(grid, key, uphill_only=uphill_only)
-        points, reasons = steady_chunks(grid, key, z["hr_max"], z.get("lthr"), out=out, hr_rest=z.get("hr_rest"))
+        points, reasons = steady_chunks(grid, key, z["hr_max"], z.get("lthr"), out=out, hr_rest=z.get("hr_rest"),
+                                        ftp=z.get("ftp") if SERIES[key]["signal"] == "power" else None)
         if uphill_only:
             dur, dur_reason = None, "uphill_only"
         else:

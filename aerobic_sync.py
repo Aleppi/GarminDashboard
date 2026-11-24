@@ -110,21 +110,32 @@ def refresh_refs(username: str, client, activities: list[dict]) -> dict[str, dic
                 hr_rest = measured_rest
         if not hr_rest:
             continue
-        # Deterministic from the (frozen) HRmax / resting HR and the sport's
-        # fraction, so recomputing it every run never moves it by itself —
-        # unless it's the athlete's own easy-run HR (set in rebuild_weekly).
+        # Bike: deterministic from the (frozen) HRmax / resting HR, so it never
+        # moves by itself. Running / walking: the athlete's own easy-session
+        # HR, measured once in rebuild_weekly and frozen — re-measured only
+        # when HRmax or resting HR changes (here) or the user resets it.
         hr_ref_source = "hr_reserve"
         hr_ref = am.reference_hr(hr_rest, hr_max, sport)
-        if sport in am.EASY_REF_SPORTS and prev.get("hr_ref_source") == "easy_sessions" and prev.get("hr_ref"):
+        frozen = sport in am.EASY_REF_SPORTS and prev.get("hr_ref_source") == "easy_sessions" and prev.get("hr_ref")
+        physiology_changed = bool(prev) and (prev.get("hr_max") != hr_max or prev.get("hr_rest") != hr_rest)
+        if frozen and not physiology_changed:
             hr_ref, hr_ref_source = prev["hr_ref"], "easy_sessions"
         if ((prev.get("hr_max"), prev.get("hr_rest"), prev.get("lthr"), prev.get("hr_ref"), prev.get("hr_ref_source"))
                 != (hr_max, hr_rest, lthr, hr_ref, hr_ref_source)):
             store.save_ref(username, zone_sport, hr_max, hr_rest, lthr, hr_ref, source, hr_ref_source)
+        if frozen and physiology_changed:
+            logger.info("aerobic: %s %s HRmax/rest changed: re-measuring the easy-session reference", username, zone_sport)
+            store.reset_easy_ref(username, zone_sport, hr_ref)
+    ftp = safe_call(client.get_cycling_ftp, default=None)
+    ftp = ftp.get("functionalThresholdPower") if isinstance(ftp, dict) else None
+    if isinstance(ftp, (int, float)) and ftp > 0:
+        store.set_ftp(username, float(ftp))
     return store.get_refs(username)
 
 
 def zones_for_analysis(refs: dict[str, dict]) -> dict[str, dict]:
-    return {zs: {"hr_max": r["hr_max"], "lthr": r.get("lthr"), "hr_rest": r.get("hr_rest")} for zs, r in refs.items()}
+    return {zs: {"hr_max": r["hr_max"], "lthr": r.get("lthr"), "hr_rest": r.get("hr_rest"), "ftp": r.get("ftp")}
+            for zs, r in refs.items()}
 
 
 # --------------------------------------------------------------- activities --
@@ -190,28 +201,36 @@ def process_activity(username: str, client, activity: dict, zones: dict[str, dic
 
 
 def update_easy_refs(username: str, by_series: dict[str, list[dict]], today: date) -> None:
-    """Running's reference HR = the athlete's typical easy-run HR (see
-    aerobic_metrics.EASY_REF_SPORTS). Falls back to the % of HR reserve
-    until there are enough runs; moves only on a >= 3 bpm shift."""
+    """Running / walking reference HR = the athlete's typical easy-session HR
+    (aerobic_metrics.EASY_REF_SPORTS). Measured once, as soon as there are
+    enough sessions, then frozen: every week of history is read at that same
+    reference, so trends stay comparable. Until then the HR-reserve formula
+    applies. reset_easy_reference() (or a HRmax / resting HR change) clears it
+    and the next rebuild measures it again."""
     refs = store.get_refs(username)
     for sport in am.EASY_REF_SPORTS:
         zone_sport = am.ZONE_SPORT[sport]
         ref = refs.get(zone_sport)
-        if not ref:
+        if not ref or ref.get("hr_ref_source") == "easy_sessions":
             continue
         pts = [r for s, rows in by_series.items() if am.SERIES[s]["sport"] == sport for r in rows]
         easy, n_act = am.easy_reference_hr(pts, today)
-        if easy is None:
-            if ref.get("hr_ref_source") == "easy_sessions":
-                store.set_easy_ref(username, zone_sport, None, None, n_act, "easy_sessions")  # keep the last value
-            else:
-                store.set_easy_ref(username, zone_sport, None, None, n_act, "hr_reserve")
-            continue
-        new = int(round(easy))
-        if ref.get("hr_ref_source") != "easy_sessions" or abs(new - (ref.get("hr_ref") or 0)) >= am.EASY_REF_UPDATE_BPM:
-            store.set_easy_ref(username, zone_sport, new, easy, n_act, "easy_sessions")
-        else:
-            store.set_easy_ref(username, zone_sport, None, easy, n_act, "easy_sessions")
+        if easy is not None:
+            store.freeze_easy_ref(username, zone_sport, int(round(easy)), easy, n_act, today.isoformat())
+            logger.info("aerobic: %s %s easy-session reference frozen at %d bpm (%d sessions)",
+                        username, zone_sport, int(round(easy)), n_act)
+
+
+def reset_easy_reference(username: str, sport: str) -> Optional[int]:
+    """User-requested re-measure: drop the frozen value and rebuild (cache
+    only, no Garmin call). Returns the new reference HR."""
+    zone_sport = am.ZONE_SPORT[sport]
+    ref = store.get_refs(username).get(zone_sport)
+    if not ref:
+        return None
+    store.reset_easy_ref(username, zone_sport, am.reference_hr(ref["hr_rest"], ref["hr_max"], sport))
+    rebuild_weekly(username)
+    return (store.get_refs(username).get(zone_sport) or {}).get("hr_ref")
 
 
 def rebuild_weekly(username: str, today: Optional[date] = None) -> None:

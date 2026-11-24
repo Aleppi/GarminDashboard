@@ -424,7 +424,8 @@ def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bo
 
     Aerobic Efficiency: only steady 5-min chunks count — aerobic HR band
     (65-85% HRmax capped at LTHR; walking/hiking from 30% of HR reserve),
-    HR not trending more than 2 bpm/min, low output variability (VI <= 1.05
+    HR not trending more than 2 bpm/min, not within 5 min after a hard effort
+    (30 s power > 120% FTP or HR > LTHR), low output variability (VI <= 1.05
     indoors, <= 1.10 outdoor rides; pace/metabolic-power CV < 5% for runs,
     < 15% for walking/hiking); first 10 min, stops and intervals
     dropped. Model: one HR = a + b*output slope per sport (cycling pools
@@ -435,10 +436,12 @@ def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bo
     source ("fitted"; "shrunk" toward the population default when data is
     thin; "default" = 0.30 bpm/W, 0.40 bpm per m/min, 6 bpm per W/kg when too
     little data or implausible) — and per series and weekly 28-day window
-    only the intercept a_w = median(HR - b*output). HR_ref: running = the
-    athlete's typical easy-run HR (median per run, 180 days, >= 3 runs;
-    hr_ref_source "easy_sessions"), else rest + 65% of HR reserve (walking
-    40%; "hr_reserve"). output_at_hr_ref =
+    only the intercept a_w = median(HR - b*output); for power, output is the
+    chunk's normalized power. HR_ref: running and hiking = the athlete's
+    typical easy-session HR (median per session over 180 days, >= 3
+    sessions), measured once and frozen (hr_ref_source "easy_sessions",
+    hr_ref_frozen_on); otherwise / cycling rest + 65% of HR reserve
+    (walking 40%; "hr_reserve"). hr_ref_rule spells it out. output_at_hr_ref =
     (HR_ref - a_w)/b (higher = fitter), hr_at_ref_output = a_w + b*ref
     (lower = fitter). confidence from the window's points and residual MAD:
     high >= 15 points & MAD <= 3 bpm, medium >= 8 & <= 5, else low. Indoor

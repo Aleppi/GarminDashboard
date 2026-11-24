@@ -1063,7 +1063,12 @@
     foot += '<div class="ae-dim">Type any ' + (unit === 'm/min' ? 'pace' : 'output') + ' to see your HR at it' +
       (s.ref_output_pinned ? '' : ' (default: your typical recent ' + (unit === 'm/min' ? 'pace' : 'output') + ')') + '. ' +
       'Lower HR at the same output, or more output at ' + s.hr_ref + ' bpm, means fitter. ' +
-      (s.hr_ref_source === 'easy_sessions' ? s.hr_ref + ' bpm is your typical easy-run HR (last 180 days, ' + (s.easy_sessions || '') + ' runs). ' : '') +
+      (s.hr_ref_source === 'easy_sessions'
+        ? s.hr_ref + ' bpm is your typical easy-' + (s.sport === 'walking' ? 'hike' : 'run') + ' HR' +
+          (s.hr_ref_frozen_on ? ', measured ' + escapeHtml(fmtShortDate(s.hr_ref_frozen_on)) + ' from ' + (s.easy_sessions || '') +
+            (s.sport === 'walking' ? ' hikes' : ' runs') : '') +
+          ' and kept fixed so weeks stay comparable (<button type="button" class="ae-link" id="aeRemeasure">re-measure</button>). '
+        : '') +
       (s.slope ? 'HR rises ' + s.slope.b.toFixed(unit === 'W' ? 2 : (unit === 'W/kg' ? 1 : 2)) + ' ' + escapeHtml(s.slope.unit) +
         (s.slope.source === 'fitted' ? ' (your ' + escapeHtml(s.sport) + ' data, 180 days)'
           : s.slope.source === 'shrunk' ? ' (your data, blended with a typical value — still little data)'
@@ -1084,6 +1089,17 @@
     form.addEventListener('submit', (e) => { e.preventDefault(); post($('aeRefInput').value.trim()); });
     const reset = $('aeRefReset');
     if (reset) reset.addEventListener('click', () => post(null));
+    const remeasure = $('aeRemeasure');
+    if (remeasure) remeasure.addEventListener('click', () => {
+      remeasure.disabled = true;
+      fetch('/api/aerobic/reset-reference', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sport: s.sport }),
+      }).then((r) => r.json()).then(() => {
+        aerobicHistory = null; aerobicHistoryPromise = null;
+        openAerobicPanel('aerobic');
+      }).catch(() => { remeasure.disabled = false; });
+    });
   }
 
   function renderDurabilityPanel(d) {

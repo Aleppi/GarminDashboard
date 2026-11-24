@@ -737,8 +737,12 @@ def _hr_ref_rule(ref: dict, sport: str) -> Optional[str]:
     if not ref.get("hr_ref"):
         return None
     if ref.get("hr_ref_source") == "easy_sessions":
-        return (f"your typical easy-session HR: median of {ref.get('easy_activities')} sessions' steady HR "
-                f"over 180 days ({ref.get('easy_hr'):.1f}) = {ref['hr_ref']}") if ref.get("easy_hr") else "your typical easy-session HR"
+        kind = {"running": "run", "walking": "hike/walk"}.get(sport, "session")
+        if not ref.get("easy_hr"):
+            return f"your typical easy-{kind} HR = {ref['hr_ref']}"
+        return (f"your typical easy-{kind} HR, frozen on {ref.get('easy_set_on') or '?'}: median of "
+                f"{ref.get('easy_activities')} {kind}s' steady HR over the previous 180 days "
+                f"({ref['easy_hr']:.1f}) = {ref['hr_ref']}")
     frac = am.REF_HR_FRACTION_BY_SPORT.get(sport, am.REF_HR_FRACTION)
     rest, mx = ref.get("hr_rest"), ref.get("hr_max")
     if rest is None or mx is None:
@@ -856,6 +860,7 @@ def build_aerobic_history(username: str, series: Optional[str] = None, include_c
             "hr_ref_rule": _hr_ref_rule(ref, meta["sport"]),
             "easy_hr": _round_or_none(ref.get("easy_hr")),
             "easy_sessions": ref.get("easy_activities"),
+            "hr_ref_frozen_on": ref.get("easy_set_on"),
             "hr_max": ref.get("hr_max"),
             "hr_rest": ref.get("hr_rest"),
             "lthr": ref.get("lthr"),

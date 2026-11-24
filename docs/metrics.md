@@ -94,9 +94,20 @@ For each activity and series:
      output < 5 % for runs, **< 15 % for walking/hiking/ski touring**: trail
      pace changes constantly with steps, roots and gradient, even at a steady
      effort.
+   - **not right after a hard effort:** the chunk is dropped if, in the 5 min
+     before it starts or during it, 30 s rolling power exceeded **120 % of
+     FTP** (power series, when Garmin has an FTP) or HR exceeded **LTHR**
+     (any sport). HR stays raised for minutes after an effort, so a steady
+     chunk there reads too much HR for its output, e.g. the recoveries of an
+     interval ride.
 6. Only runs of **≥ 2 consecutive valid chunks** (≥ 10 min steady) count.
-   Each valid chunk becomes one point: (mean output, mean HR, date,
-   temperature for outdoor activities).
+   Each valid chunk becomes one point: (output, mean HR, date, temperature
+   for outdoor activities). **For power the output is the chunk's normalized
+   power** (NP, from 30 s rolling power), not its average. At the same
+   average, a chunk with surges costs more than a smooth one: outdoor chunks
+   run at VI 1.03–1.10, the trainer at ~1.00. With averages, outdoor read
+   ~13 W below indoor at the same HR. The plain average is stored too
+   (`avg_output`). The same NP chunks feed the durability regression.
 
 HRmax and LTHR are **per sport**, from Garmin's own HR-zone settings (cycling,
 running, and the default set for walking/hiking). If a sport has none, the
@@ -147,24 +158,28 @@ over the last 120 days stands in for HRmax.
     a narrow output range it swung freely, and so did the headline (outdoor
     bike jumped between ~155 and ~210 W). Fitness moves the line up and down,
     not its steepness, so that's what each window estimates now.
-- **Reference HR, running: your own typical easy-run HR.** It's the median of
-  each run's median steady-chunk HR over the last 180 days, rounded. Every
-  run counts once, so one long run can't dominate. It needs ≥ 3 runs; until
-  then the formula below applies. Once set it only moves when the measured
-  value shifts by ≥ 3 bpm. Every week of history is re-read at the same
-  reference, so a move only relabels the line, but it shouldn't flicker.
-  Why: zones compress very differently between people. A fit runner's easy
-  pace sits far below threshold, while an untrained runner is in Z3 as soon as
-  they run at all. A fixed 65 % of reserve could sit 10+ bpm below every run
-  someone does, which turned the headline into an extrapolation (Anna:
-  152 bpm reference, runs at 157–169).
-- **Reference HR, cycling and walking:** `HRref = HRrest + 0.65 · (HRmax − HRrest)`,
-  rounded, or **0.40 for walking/hiking**, so it sits inside the HR range
-  hikes actually produce. The API's `hr_ref_source` says which applies
-  (`easy_sessions` or `hr_reserve`), and `hr_ref_rule` spells out the
-  calculation, e.g. "rest 46 + 40% of HR reserve (199 - 46) = 107". HRrest is Garmin's configured resting HR if you set
-  one. Otherwise it's the median of your daily resting HR over 28 days,
-  measured once and then **frozen**, so the whole history stays comparable.
+- **Reference HR, running and walking/hiking: your own typical easy-session
+  HR**, **measured once and frozen.**
+  - The value is the median of each session's median steady-chunk HR over the
+    180 days before it's measured. Each session counts once, so one long one
+    can't dominate.
+  - It needs ≥ 3 sessions. Until then the HR-reserve formula applies: 65 %
+    for running, 40 % for walking.
+  - Once measured it is **stored with its date** and doesn't move. It's
+    re-measured only when Garmin's HRmax or resting HR changes, or when you
+    press *re-measure* in the panel (`POST /api/aerobic/reset-reference`).
+  - Every week of history is always read at the current reference, so a
+    re-measure re-baselines the whole history and trends stay comparable.
+  - Why: zones compress very differently between people. A fit runner's easy
+    pace sits far below threshold, while an untrained runner is in Z3 as soon
+    as they run at all. A fixed % of reserve could sit 10+ bpm below every run
+    (or hike) someone does, which turned the headline into an extrapolation.
+    Anna: 152 bpm reference, runs at 157–169.
+- **Reference HR, cycling:** `HRref = HRrest + 0.65 · (HRmax − HRrest)`,
+  rounded.
+- The API's `hr_ref_source` says which applies (`easy_sessions` or
+  `hr_reserve`). `hr_ref_rule` spells it out with the numbers and the date
+  it was frozen, and `hr_ref_frozen_on` gives that date on its own.
 - **Headline:** `Output@HRref = (HRref − a_w) / b`, e.g. "Power at 137 bpm:
   177 W" or "Pace at 145 bpm: 5:12/km". Higher means fitter.
 - **Inverse:** `HR at reference output = a_w + b · ref`. Lower means fitter.

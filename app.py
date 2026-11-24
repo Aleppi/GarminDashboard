@@ -443,6 +443,25 @@ def api_aerobic_ref_output():
     return jsonify({"saved": True, "series": series, "value": value})
 
 
+@app.route("/api/aerobic/reset-reference", methods=["POST"])
+@auth.login_required
+def api_aerobic_reset_reference():
+    """Re-measure the frozen easy-session reference HR for running or
+    walking from the last 180 days (cache only, no Garmin call). The whole
+    history is re-read at the new value, so trends stay comparable."""
+    import aerobic_metrics
+    import aerobic_sync
+
+    username = auth.current_username()
+    sport = (request.get_json(silent=True) or {}).get("sport")
+    if sport not in aerobic_metrics.EASY_REF_SPORTS:
+        return jsonify({"error": "sport must be one of " + ", ".join(sorted(aerobic_metrics.EASY_REF_SPORTS))}), 400
+    hr_ref = aerobic_sync.reset_easy_reference(username, sport)
+    with _cache_lock:
+        _caches.pop(username, None)
+    return jsonify({"saved": True, "sport": sport, "hr_ref": hr_ref})
+
+
 @app.route("/api/trend")
 @auth.login_required
 def api_trend():

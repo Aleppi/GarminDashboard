@@ -158,6 +158,47 @@ class SteadyChunks(unittest.TestCase):
         res = am.analyze_activity(details(run(3600, lambda i: 1.2, lambda i: 105, grade=0.08)), "hiking", zones)
         self.assertTrue(res["series"]["walk_outdoor"]["points"])  # 105 bpm: below 65% HRmax, above the walking floor
 
+    def test_power_chunk_output_is_normalized_power(self):
+        # Rollers outdoors: 290/150 W in 50 s swings, avg 220 W, NP ~239 W.
+        def p(i):
+            return 290 if (i % 100) < 50 else 150
+        pts = am.analyze_activity(details(ride(3600, p, lambda i: 140)), "road_biking", ZONES)["series"]["bike_outdoor"]["points"]
+        self.assertTrue(pts)
+        self.assertAlmostEqual(pts[0]["avg_output"], 220, delta=1)
+        self.assertAlmostEqual(pts[0]["output"], am.normalized_output([p(i) for i in range(600, 900)]), places=6)
+        self.assertGreater(pts[0]["output"], pts[0]["avg_output"] * 1.05)
+        # Steady trainer power: NP == average.
+        flat = am.analyze_activity(details(ride(3600, lambda i: 175, lambda i: 140)), "virtual_ride", ZONES)["series"]["bike_indoor"]["points"]
+        self.assertAlmostEqual(flat[0]["output"], 175, places=6)
+
+    def test_post_effort_chunks_dropped(self):
+        # 60 s at 400 W (> 1.2 x FTP 256) from 1800 s; HR stays in band. The
+        # chunk containing it and those starting within 5 min after it go.
+        def p(i):
+            return 400 if 1800 <= i < 1860 else 175
+        zones = dict(ZONES, CYCLING=dict(ZONES["CYCLING"], ftp=256))
+        res = am.analyze_activity(details(ride(4800, p, lambda i: 140)), "virtual_ride", zones)["series"]["bike_indoor"]
+        starts = sorted(pt["t_start"] - T0 for pt in res["points"])
+        # Chunks start at 600 + 300k: 1800 contains the effort, 2100 starts
+        # within 5 min of it; 1500 (ends just before) and 2400 are fine.
+        self.assertEqual(res["reasons"].get("post_effort"), 1)  # the 1800 chunk already fails VI / HR filters
+        self.assertNotIn(1800, starts)
+        self.assertNotIn(2100, starts)
+        self.assertIn(1500, starts)
+        self.assertIn(2400, starts)
+        # Without an FTP the power trigger is off.
+        res = am.analyze_activity(details(ride(4800, p, lambda i: 140)), "virtual_ride", ZONES)["series"]["bike_indoor"]
+        self.assertEqual(res["reasons"].get("post_effort", 0), 0)
+
+    def test_post_effort_hr_above_lthr_any_sport(self):
+        # Run: HR above LTHR (175) for a minute at 1800 s; pace steady.
+        res = am.analyze_activity(details(run(4800, lambda i: 3.0, lambda i: 180 if 1800 <= i < 1860 else 150)),
+                                  "running", ZONES)["series"]["run_outdoor"]
+        starts = [pt["t_start"] - T0 for pt in res["points"]]
+        self.assertEqual(res["reasons"].get("post_effort"), 1)  # the 1800 chunk already fails VI / HR filters
+        self.assertNotIn(2100, starts)
+        self.assertIn(2400, starts)
+
     def test_outdoor_bike_chunk_vi_limit_1_10(self):
         # Rollers: 290/150 W in 50 s swings, chunk VI ~1.09 — steady enough
         # outdoors, not on the trainer.
@@ -540,3 +581,48 @@ class Durability(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FrozenReference(unittest.TestCase):
+    """Running / walking reference HR: measured once from easy sessions,
+    frozen, re-measured only on reset or a HRmax / resting HR change."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = os.environ.get("AEROBIC_DB")
+        os.environ["AEROBIC_DB"] = os.path.join(self.tmp.name, "t.db")
+        import aerobic_store
+        import aerobic_sync
+        self.store, self.sync = aerobic_store, aerobic_sync
+        self.store.save_ref("u", "RUNNING", 199, 46, 175, am.reference_hr(46, 199, "running"), "garmin_zones")
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("AEROBIC_DB", None)
+        else:
+            os.environ["AEROBIC_DB"] = self._old
+        self.tmp.cleanup()
+
+    def _runs(self, hr, n=4, day=date(2026, 11, 1)):
+        return {"run_outdoor": [{"date": day - timedelta(days=k), "hr": hr, "activity_id": f"r{hr}-{k}",
+                                 "output": 170, "series": "run_outdoor"} for k in range(n)]}
+
+    def test_frozen_until_reset(self):
+        self.sync.update_easy_refs("u", self._runs(152), date(2026, 11, 24))
+        ref = self.store.get_refs("u")["RUNNING"]
+        self.assertEqual((ref["hr_ref"], ref["hr_ref_source"], ref["easy_set_on"]), (152, "easy_sessions", "2026-11-24"))
+        # Later runs at a different HR don't move it...
+        self.sync.update_easy_refs("u", self._runs(160), date(2026, 12, 20))
+        self.assertEqual(self.store.get_refs("u")["RUNNING"]["hr_ref"], 152)
+        # ...until the user resets it.
+        self.store.reset_easy_ref("u", "RUNNING", 145)
+        self.assertEqual(self.store.get_refs("u")["RUNNING"]["hr_ref_source"], "hr_reserve")
+        self.sync.update_easy_refs("u", self._runs(160), date(2026, 12, 20))
+        ref = self.store.get_refs("u")["RUNNING"]
+        self.assertEqual((ref["hr_ref"], ref["easy_set_on"]), (160, "2026-12-20"))
+
+    def test_formula_until_enough_sessions(self):
+        self.sync.update_easy_refs("u", self._runs(152, n=2), date(2026, 11, 24))
+        ref = self.store.get_refs("u")["RUNNING"]
+        self.assertEqual((ref["hr_ref"], ref["hr_ref_source"]), (145, "hr_reserve"))
