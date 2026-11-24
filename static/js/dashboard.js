@@ -795,6 +795,16 @@
     return unit === 'W' ? 'Power' : (unit === 'm/min' ? 'Pace' : 'Metabolic power');
   }
 
+  // Why a week fell back to the output/HR ratio (low confidence).
+  const AE_FIT_ISSUES = {
+    too_few_points: 'fewer than 8 steady points',
+    one_session: 'all points from one session',
+    narrow_output_range: 'outputs too similar',
+    no_slope: 'HR didn\'t rise with output',
+    slope_out_of_range: 'HR~output slope implausible',
+    hr_not_tracking_output: 'HR barely tracked output',
+  };
+
   function aeBadge(conf) {
     return conf ? '<span class="ae-badge ' + conf + '">' + conf + '</span>' : '';
   }
@@ -1037,6 +1047,7 @@
       return '<b>' + escapeHtml(fmtAeOutput(w.output_at_hr_ref, unit)) + '</b> @ ' + s.hr_ref + ' bpm' +
         (typeof w.hr_at_ref_output === 'number' ? '<br>HR at ' + escapeHtml(fmtAeOutput(s.ref_output, unit)) + ': ' + w.hr_at_ref_output.toFixed(0) + ' bpm' : '') +
         '<br>' + w.n + ' pts · ' + escapeHtml(w.confidence || '') + ' confidence' +
+        (w.method === 'ratio' && AE_FIT_ISSUES[w.fit_issue] ? '<br>' + escapeHtml(AE_FIT_ISSUES[w.fit_issue]) + ', so avg output/HR used' : '') +
         (typeof w.mean_temp_c === 'number' ? '<br>avg ' + w.mean_temp_c.toFixed(0) + ' °C' + (w.hot_points ? ' (' + w.hot_points + ' hot pts count half)' : '') : '') +
         '<span class="mc-tip-date">from sessions ' + escapeHtml(aeWindowRange(w.week_end)) + '</span>';
     });
@@ -1130,14 +1141,23 @@
     body.innerHTML = svg + '</svg>';
     aeBindTips(body, $('aerobicChartTip'), coords, (i) => {
       const x = sessions[i];
+      const hrs = x.hr_at_reference_output, np = x.normalized_output;
+      const halves = x.method === 'regression' && hrs
+        ? '<br>HR at ' + escapeHtml(x.reference_output || '—') + ': ' + hrs[0].toFixed(0) + ' → ' + hrs[1].toFixed(0) + ' bpm' +
+          '<br><span class="ae-dim">fitted on ' + x.chunks_per_half[0] + ' + ' + x.chunks_per_half[1] + ' steady 5-min chunks</span>'
+        : '<br>1st half: ' + escapeHtml((np && np[0]) || x.first_half.output || '—') + ' @ ' + (x.first_half.hr || 0).toFixed(0) + ' bpm' +
+          '<br>2nd half: ' + escapeHtml((np && np[1]) || x.second_half.output || '—') + ' @ ' + (x.second_half.hr || 0).toFixed(0) + ' bpm' +
+          (np && s.unit === 'W' ? '<br><span class="ae-dim">normalized power per half</span>' : '');
       return '<b>' + x.decoupling_pct.toFixed(1) + '%</b> ' + escapeHtml(x.label) +
-        '<br>' + escapeHtml(x.name || '') + ' · ' + x.moving_min + ' min' +
-        '<br>1st half: ' + escapeHtml(x.first_half.output || '—') + ' @ ' + (x.first_half.hr || 0).toFixed(0) + ' bpm' +
-        '<br>2nd half: ' + escapeHtml(x.second_half.output || '—') + ' @ ' + (x.second_half.hr || 0).toFixed(0) + ' bpm' +
+        '<br>' + escapeHtml(x.name || '') + ' · ' + x.moving_min + ' min' + halves +
         (typeof x.temp_c === 'number' ? '<br>' + x.temp_c.toFixed(0) + ' °C' : '') +
         '<span class="mc-tip-date">' + escapeHtml(fmtShortDate(x.date)) + '</span>';
     });
-    $('aerobicFoot').innerHTML = '<div class="ae-dim">Drop in output per heartbeat from the first to the second half, after the first 10 min. ' +
+    const nExcl = (s.durability_excluded || []).length;
+    $('aerobicFoot').innerHTML = '<div class="ae-dim">Drop in output per heartbeat from the first to the second half, after the first 10 min, ' +
+      'compared at the same output (HR fitted on each half\'s steady chunks; normalized ' + (s.unit === 'W' ? 'power' : 'output') +
+      ' per half when there are too few). ' +
+      (nExcl ? nExcl + ' long session' + (nExcl === 1 ? ' was' : 's were') + ' left out because the halves weren\'t comparable. ' : '') +
       '<span style="color:' + AE_LABEL_COLORS.strong + '">&lt; 5% strong</span> · <span style="color:' + AE_LABEL_COLORS.moderate +
       '">5–8% moderate</span> · <span style="color:' + AE_LABEL_COLORS.low + '">&gt; 8% low</span>. ' +
       (s.indoor ? 'Indoor: no temperature recorded.' : 'Heat raises HR late in a session, so hot days read worse.') + '</div>';

@@ -61,12 +61,35 @@ CREATE TABLE IF NOT EXISTS sync_state (
 """
 
 
+# Columns added after the first release; CREATE TABLE IF NOT EXISTS won't
+# add them to an existing database, so they're added here on connect.
+_ADDED_COLUMNS = {
+    "sessions": {"method": "TEXT", "n_chunks1": "INTEGER", "n_chunks2": "INTEGER", "ref_output": "REAL",
+                 "hr1_at_ref": "REAL", "hr2_at_ref": "REAL", "np1": "REAL", "np2": "REAL"},
+    "weekly": {"fit_issue": "TEXT", "raw_b": "REAL"},
+}
+_migrated: set[str] = set()
+
+
+def _migrate(conn: sqlite3.Connection, path: str) -> None:
+    if path in _migrated:
+        return
+    for table, cols in _ADDED_COLUMNS.items():
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for col, typ in cols.items():
+            if col not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+    conn.commit()
+    _migrated.add(path)
+
+
 def _connect() -> sqlite3.Connection:
     path = db_path()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    _migrate(conn, path)
     return conn
 
 
@@ -93,7 +116,7 @@ def save_activity(username: str, activity_id: str, day: str, type_key: str, name
     aid = str(activity_id)
     series = analysis.get("series") or {}
     n_points = sum(len(s["points"]) for s in series.values())
-    n_sessions = sum(1 for s in series.values() if s.get("durability"))
+    n_sessions = sum(1 for s in series.values() if (s.get("durability") or {}).get("decoupling_pct") is not None)
     status = "skipped" if analysis.get("skip_reason") else ("used" if n_points or n_sessions else "no_steady_data")
     with _connect() as conn:
         conn.execute("DELETE FROM chunks WHERE username = ? AND activity_id = ?", (username, aid))
@@ -108,10 +131,13 @@ def save_activity(username: str, activity_id: str, day: str, type_key: str, name
             if d:
                 conn.execute(
                     """INSERT INTO sessions (username, activity_id, series, day, name, moving_s, vi, ef1, ef2,
-                       output1, output2, hr1, hr2, decoupling_pct, label, temp_c)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (username, aid, key, day, name, d["moving_s"], d["vi"], d["ef1"], d["ef2"], d["output1"],
-                     d["output2"], d["hr1"], d["hr2"], d["decoupling_pct"], d["label"], temp),
+                       output1, output2, hr1, hr2, decoupling_pct, label, temp_c,
+                       method, n_chunks1, n_chunks2, ref_output, hr1_at_ref, hr2_at_ref, np1, np2)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (username, aid, key, day, name, d["moving_s"], d["vi"], d.get("ef1"), d.get("ef2"), d["output1"],
+                     d["output2"], d["hr1"], d["hr2"], d.get("decoupling_pct"), d.get("label"), temp,
+                     d.get("method", "np_ef"), d.get("n_chunks1"), d.get("n_chunks2"), d.get("ref_output"),
+                     d.get("hr1_at_ref"), d.get("hr2_at_ref"), d.get("np1"), d.get("np2")),
                 )
         reason = analysis.get("skip_reason")
         if not reason and status == "no_steady_data":
@@ -147,8 +173,14 @@ def series_with_points(username: str) -> list[str]:
     return [r["series"] for r in _rows("SELECT DISTINCT series FROM chunks WHERE username = ?", (username,))]
 
 
-def durability_sessions(username: str, series: Optional[str] = None, limit: Optional[int] = None) -> list[dict]:
+def durability_sessions(username: str, series: Optional[str] = None, limit: Optional[int] = None,
+                        include_excluded: bool = False) -> list[dict]:
+    """Scored sessions, newest first. include_excluded=True also returns the
+    long sessions whose halves weren't comparable (method "excluded",
+    decoupling_pct NULL)."""
     sql = "SELECT * FROM sessions WHERE username = ?"
+    if not include_excluded:
+        sql += " AND decoupling_pct IS NOT NULL"
     args: list[Any] = [username]
     if series:
         sql += " AND series = ?"
@@ -208,7 +240,7 @@ def set_ref_output(username: str, series: str, value: Optional[float], pinned: b
 # ---------------------------------------------------------------- weekly --
 
 _WEEKLY_COLS = ("n", "n_activities", "a", "b", "fit_ok", "ratio", "hr_min", "hr_max", "out_min", "out_max",
-                "median_out", "mean_temp_c", "hot_points")
+                "median_out", "mean_temp_c", "hot_points", "fit_issue", "raw_b")
 
 
 def replace_weekly(username: str, series: str, weeks: list[dict]) -> None:
@@ -217,7 +249,7 @@ def replace_weekly(username: str, series: str, weeks: list[dict]) -> None:
         conn.executemany(
             f"INSERT INTO weekly (username, series, week_end, {', '.join(_WEEKLY_COLS)}) "
             f"VALUES (?,?,?,{','.join('?' * len(_WEEKLY_COLS))})",
-            [(username, series, w["week_end"], *[int(w[c]) if c == "fit_ok" else w[c] for c in _WEEKLY_COLS])
+            [(username, series, w["week_end"], *[int(w[c]) if c == "fit_ok" else w.get(c) for c in _WEEKLY_COLS])
              for w in weeks],
         )
         conn.commit()

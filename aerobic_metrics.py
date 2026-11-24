@@ -25,7 +25,8 @@ from typing import Any, Iterable, Optional
 
 # Bump whenever a change below would alter cached results: the sync job
 # reprocesses every activity whose stored algo_version is older.
-ALGO_VERSION = 2  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
+ALGO_VERSION = 3  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
+                  # 3: durability by per-half regression (NP-EF fallback), outdoor-bike VI 1.20
 
 WARMUP_S = 600                 # dropped from the start of each activity (HR settling)
 CHUNK_S = 300                  # one data point per 5 min of steady effort
@@ -48,18 +49,33 @@ ALT_MEAN_S = 30
 RUN_STOP_SPEED = 1.0           # m/s
 WALK_STOP_SPEED = 0.3          # m/s — steep hiking can be slow but still moving
 DURABILITY_MIN_MOVING_S = 90 * 60
-DURABILITY_VI_MAX = 1.10       # whole-session variability limit (excludes interval sessions)
+DURABILITY_VI_MAX = 1.10       # whole-session variability limit, inclusive (excludes interval sessions)
 # Outdoor riding varies power with terrain even when steady: hilly but
-# steady rides measured 1.10-1.15, against 1.00-1.02 for indoor ERG.
-DURABILITY_VI_MAX_BY_SERIES = {"bike_outdoor": 1.15}
+# steady rides measured 1.10-1.15, against 1.00-1.02 for indoor ERG. The
+# per-half regression below compares like with like, so outdoor rides can
+# be let in up to 1.20.
+DURABILITY_VI_MAX_BY_SERIES = {"bike_outdoor": 1.20}
+DURABILITY_MIN_CHUNKS_PER_HALF = 4   # valid 5-min chunks needed in each half for the regression method
+DURABILITY_OVERLAP_TOL = 0.02        # halves' chunk output ranges may miss each other by 2% of the median
+DURABILITY_NP_MAX_DIFF = 0.10        # NP-EF fallback only when the halves' NP differ by <= 10%
 MOVING_SPEED = 1.0             # m/s; a coasting rider (zero power) is still moving
 DURABILITY_COVERAGE_MIN = 0.90
 WINDOW_DAYS = 28
-MIN_POINTS_FIT = 8
+MIN_POINTS_FIT = 8             # fewer: "low" (ratio fallback)
+MIN_POINTS_HIGH = 15           # 8-14 points: at best "medium"
 MIN_ACTIVITIES_FIT = 2         # a slope from one session mostly measures that session's cardiac drift
 MAX_EXTRAPOLATION = 0.25       # fitted output may sit at most 25% beyond the outputs actually seen
 MIN_ELASTICITY = 0.10          # %HR change per % output change; flatter = HR isn't tracking output
-MIN_OUTPUT_RANGE = 0.10        # (max - min) / median output needed for a meaningful slope
+MIN_OUTPUT_RANGE = 0.15        # (max - min) / median output needed for a meaningful slope
+# Physiologically plausible HR-vs-output slopes (bpm per output unit). A
+# fit outside them is noise, not physiology, and solving it for HRref gives
+# nonsense (e.g. b = 0.15 bpm/W turns a 10 bpm error into 67 W). Bike is the
+# anchor: 0.2-0.6 bpm/W. Converted through metabolic cost (~23% cycling
+# efficiency, 55-85 kg riders), that's ~2.5-12 bpm per W/kg of metabolic
+# power — the walking bound — and, at Minetti's 3.6 J/kg/m flat running
+# cost (0.06 W/kg per m/min), ~0.15-0.75 bpm per m/min (2.5-12.5 bpm per
+# km/h) for running speed / GAS.
+SLOPE_BOUNDS = {"W": (0.2, 0.6), "m/min": (0.15, 0.75), "W/kg": (2.5, 12.0)}
 HEAT_DOWNWEIGHT_C = 25.0       # outdoor points above this count half
 HEAT_CORRECTION_BASE_C = 20.0  # optional HR correction: -1 bpm per degree above this
 HEAT_CORRECTION_BPM_PER_C = 1.0
@@ -482,12 +498,54 @@ def durability_label(decoupling_pct: Optional[float]) -> Optional[str]:
     return "low"
 
 
+def normalized_output(values: list[float]) -> Optional[float]:
+    """Coggan-style NP: 4th-power mean of the 30 s rolling average."""
+    if not values:
+        return None
+    rolled = rolling_mean_trailing(values, SMOOTH_S)
+    return statistics.fmean(v**4 for v in rolled) ** 0.25
+
+
+def _half_fit(pts: list[dict], unit: str) -> tuple[float, float]:
+    """HR = a + b*output over one half's chunks. Within one session the
+    output range can be tiny (ERG), which leaves the slope unidentified; it's
+    clamped to [0, the plausible maximum] and the line re-centred on the
+    half's mean, so evaluating it inside the data stays an interpolation."""
+    xs = [p["output"] for p in pts]
+    ys = [p["hr"] for p in pts]
+    mx, my = statistics.fmean(xs), statistics.fmean(ys)
+    fit = huber_fit(xs, ys)
+    if fit is None:
+        return my, 0.0
+    a, b = fit
+    hi = SLOPE_BOUNDS.get(unit, (0.0, math.inf))[1]
+    if not 0.0 <= b <= hi:
+        b = min(max(b, 0.0), hi)
+        a = my - b * mx
+    return a, b
+
+
 def durability(grid: Grid, series: str, out: Optional[list[Optional[float]]] = None,
-               interval_session: bool = False) -> tuple[Optional[dict], str]:
-    """First-half vs second-half output per heartbeat for a long, steady-ish
-    session. (result, "ok") or (None, reason). `interval_session` comes from
-    the dashboard's own interval detection (laps/pace structure): long steady
-    reps like 2x20 min have a low VI, so VI alone doesn't catch them."""
+               interval_session: bool = False, points: Optional[list[dict]] = None) -> tuple[Optional[dict], str]:
+    """Aerobic decoupling of one long, steady-ish session.
+
+    Eligibility: >= 90 min moving, not an interval session (the dashboard's
+    own lap/pace detection: long steady reps like 2x20 min have a low VI, so
+    VI alone doesn't catch them), HR/output present, VI within limit.
+
+    After the first 10 min, moving time is split into two equal halves.
+      "regression" (primary): fit HR = a + b*output on each half's valid
+        5-min chunks (`points`, from steady_chunks: same filters as Aerobic
+        Efficiency). Needs >= 4 chunks per half and overlapping output ranges.
+        Both fits are read at a common reference output (middle of the
+        overlap): decoupling = (HR2 - HR1) / HR2, i.e. the drop in
+        output-per-heartbeat at the same output — a like-for-like Pa:HR.
+      "np_ef" (fallback): EF = NP / mean HR per half (mean GAS / metabolic
+        power for speed-based sports), only if the halves' NP differ by <= 10%.
+      "excluded": neither is possible — the halves aren't comparable; stored
+        with decoupling None.
+    Returns (result, "ok"), (excluded result, "not_comparable"), or
+    (None, reason) for an ineligible session."""
     if out is None:
         out = output_signal(grid, series)
     moving_s = len(active_seconds(grid, series, moving=True)[0])
@@ -502,32 +560,67 @@ def durability(grid: Grid, series: str, out: Optional[list[Optional[float]]] = N
         return None, "missing_data"
     outs_all = [out[i] if out[i] is not None else 0.0 for i in idx]
     vi = variability_index(outs_all)
-    if vi is None or vi >= DURABILITY_VI_MAX_BY_SERIES.get(series, DURABILITY_VI_MAX):
+    if vi is None or vi > DURABILITY_VI_MAX_BY_SERIES.get(series, DURABILITY_VI_MAX):
         return None, "variable_output"
 
+    meta = SERIES[series]
     half = len(idx) // 2
 
-    def ef(part: list[int]) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    def means(lo: int, hi: int) -> tuple[Optional[float], Optional[float], Optional[float]]:
+        part = idx[lo:hi]
         pairs = [(grid.hr[i], out[i]) for i in part if grid.hr[i] is not None and out[i] is not None]
         if not pairs:
             return None, None, None
         mo = statistics.fmean(o for _, o in pairs)
         mh = statistics.fmean(h for h, _ in pairs)
-        return (mo / mh if mh else None), mo, mh
+        # NP for power; the plain mean for GAS / metabolic power, which
+        # already account for terrain.
+        norm = normalized_output(outs_all[lo:hi]) if meta["signal"] == "power" else mo
+        return mo, mh, norm
 
-    ef1, out1, hr1 = ef(idx[:half])
-    ef2, out2, hr2 = ef(idx[half:])
-    if not ef1 or ef2 is None:
+    out1, hr1, np1 = means(0, half)
+    out2, hr2, np2 = means(half, len(idx))
+    if not hr1 or not hr2 or not out1 or not out2:
         return None, "missing_data"
-    pct = (ef1 - ef2) / ef1 * 100
-    return {
-        "moving_s": moving_s,
-        "vi": round(vi, 3),
-        "ef1": ef1, "ef2": ef2,
-        "output1": out1, "output2": out2, "hr1": hr1, "hr2": hr2,
-        "decoupling_pct": pct,
-        "label": durability_label(pct),
-    }, "ok"
+
+    result: dict[str, Any] = {
+        "moving_s": moving_s, "vi": round(vi, 3),
+        "output1": out1, "output2": out2, "hr1": hr1, "hr2": hr2, "np1": np1, "np2": np2,
+        "n_chunks1": 0, "n_chunks2": 0, "ref_output": None, "hr1_at_ref": None, "hr2_at_ref": None,
+        "ef1": None, "ef2": None, "decoupling_pct": None, "label": None, "method": "excluded",
+    }
+
+    pos = {grid.t[i]: p for p, i in enumerate(idx)}
+    halves: tuple[list[dict], list[dict]] = ([], [])
+    for pt in points or []:
+        p = pos.get(pt.get("t_start"))
+        if p is not None:
+            halves[0 if p + CHUNK_S / 2 < half else 1].append(pt)
+    c1, c2 = halves
+    result["n_chunks1"], result["n_chunks2"] = len(c1), len(c2)
+
+    if len(c1) >= DURABILITY_MIN_CHUNKS_PER_HALF and len(c2) >= DURABILITY_MIN_CHUNKS_PER_HALF:
+        lo = max(min(p["output"] for p in c1), min(p["output"] for p in c2))
+        hi = min(max(p["output"] for p in c1), max(p["output"] for p in c2))
+        tol = DURABILITY_OVERLAP_TOL * statistics.median([p["output"] for p in c1 + c2])
+        if lo <= hi + tol:
+            ref = (lo + hi) / 2
+            a1, b1 = _half_fit(c1, meta["unit"])
+            a2, b2 = _half_fit(c2, meta["unit"])
+            h1, h2 = a1 + b1 * ref, a2 + b2 * ref
+            if h1 > 0 and h2 > 0:
+                result.update(method="regression", ref_output=ref, hr1_at_ref=h1, hr2_at_ref=h2,
+                              ef1=ref / h1, ef2=ref / h2)
+
+    if result["method"] == "excluded" and np1 and np2:
+        if abs(np2 - np1) / np1 <= DURABILITY_NP_MAX_DIFF:
+            result.update(method="np_ef", ef1=np1 / hr1, ef2=np2 / hr2)
+
+    if result["method"] == "excluded":
+        return result, "not_comparable"
+    pct = (result["ef1"] - result["ef2"]) / result["ef1"] * 100
+    result.update(decoupling_pct=pct, label=durability_label(pct))
+    return result, "ok"
 
 
 # ------------------------------------------------------------- one activity --
@@ -554,7 +647,7 @@ def analyze_activity(details: dict, type_key: str, zones: dict[str, dict], inter
             continue
         out = output_signal(grid, key)
         points, reasons = steady_chunks(grid, key, z["hr_max"], z.get("lthr"), out=out)
-        dur, dur_reason = durability(grid, key, out=out, interval_session=interval_session)
+        dur, dur_reason = durability(grid, key, out=out, interval_session=interval_session, points=points)
         result["series"][key] = {"points": points, "durability": dur, "durability_reason": dur_reason, "reasons": reasons}
     return result
 
@@ -617,10 +710,30 @@ def huber_fit(xs: list[float], ys: list[float], ws: Optional[list[float]] = None
     return fit
 
 
-def fit_window(points: list[dict], heat_correction: bool = False) -> Optional[dict]:
+def fit_issue(n: int, n_activities: int, out_range: float, b: Optional[float],
+              elasticity: Optional[float], unit: Optional[str]) -> Optional[str]:
+    """Why a window's HR~output fit can't be trusted (None = it can)."""
+    if n < MIN_POINTS_FIT:
+        return "too_few_points"
+    if n_activities < MIN_ACTIVITIES_FIT:
+        return "one_session"
+    if out_range < MIN_OUTPUT_RANGE:
+        return "narrow_output_range"
+    if b is None or b <= 0:
+        return "no_slope"
+    lo, hi = SLOPE_BOUNDS.get(unit or "", (None, None))
+    if lo is not None and not lo <= b <= hi:
+        return "slope_out_of_range"
+    if elasticity is None or elasticity < MIN_ELASTICITY:
+        return "hr_not_tracking_output"
+    return None
+
+
+def fit_window(points: list[dict], heat_correction: bool = False, unit: Optional[str] = None) -> Optional[dict]:
     """Model one 28-day window of chunk points. Stored as-is; the headline
     value is derived at read time (window_headline) so a changed reference
-    HR or pinned reference output never needs a refit."""
+    HR or pinned reference output never needs a refit. `unit` selects the
+    plausible-slope bounds (SLOPE_BOUNDS); without it they aren't applied."""
     pts = [p for p in points if p.get("output") and p.get("hr")]
     if not pts:
         return None
@@ -635,10 +748,8 @@ def fit_window(points: list[dict], heat_correction: bool = False) -> Optional[di
     # slope means HR in this window isn't tracking output (heat, fatigue,
     # sensor noise), and solving it for HRref would be wildly unstable.
     elasticity = fit[1] * median_out / statistics.median(ys) if fit else None
-    fit_ok = (
-        fit is not None and len(pts) >= MIN_POINTS_FIT and n_activities >= MIN_ACTIVITIES_FIT
-        and out_range >= MIN_OUTPUT_RANGE and fit[1] > 0 and elasticity >= MIN_ELASTICITY
-    )
+    issue = fit_issue(len(pts), n_activities, out_range, fit[1] if fit else None, elasticity, unit)
+    fit_ok = issue is None
     ratios = [x / y for x, y in zip(xs, ys) if y]
     temps = [p["temp_c"] for p in pts if p.get("temp_c") is not None]
     return {
@@ -647,6 +758,8 @@ def fit_window(points: list[dict], heat_correction: bool = False) -> Optional[di
         "a": fit[0] if fit_ok else None,
         "b": fit[1] if fit_ok else None,
         "fit_ok": fit_ok,
+        "fit_issue": issue,
+        "raw_b": fit[1] if fit else None,
         "ratio": statistics.median(ratios) if ratios else None,
         "hr_min": min(ys), "hr_max": max(ys),
         "out_min": min(xs), "out_max": max(xs),
@@ -658,10 +771,15 @@ def fit_window(points: list[dict], heat_correction: bool = False) -> Optional[di
 
 def window_headline(window: dict, hr_ref: float, ref_output: Optional[float]) -> dict:
     """Output@HRref and HR@ref-output from a stored window fit, with a
-    confidence grade: "high" (fit, HRref inside the data's HR span),
-    "medium" (fit, but HRref is outside that span), "low" (the median
-    output/HR ratio, used when there's no trustworthy fit or the fitted
-    value lands more than MAX_EXTRAPOLATION beyond the outputs seen)."""
+    confidence grade:
+      "high"   — trustworthy fit, >= MIN_POINTS_HIGH points, HRref inside
+                 the HR span seen;
+      "medium" — trustworthy fit but only 8-14 points, or HRref outside the
+                 HR span (extrapolated);
+      "low"    — no trustworthy fit (too few points, one session, narrow
+                 output range, implausible slope), or the fitted value lands
+                 more than MAX_EXTRAPOLATION beyond the outputs seen: the
+                 median output/HR ratio scaled to HRref is used instead."""
     if not window or not window.get("n"):
         return {"output_at_hr_ref": None, "hr_at_ref_output": None, "confidence": None}
     if window.get("fit_ok"):
@@ -674,7 +792,8 @@ def window_headline(window: dict, hr_ref: float, ref_output: Optional[float]) ->
             return {
                 "output_at_hr_ref": value,
                 "hr_at_ref_output": (a + b * ref_output) if ref_output else None,
-                "confidence": "high" if inside else "medium",
+                "confidence": "high" if inside and window["n"] >= MIN_POINTS_HIGH else "medium",
+                "method": "regression",
             }
     ratio = window.get("ratio")
     if not ratio:
@@ -683,6 +802,7 @@ def window_headline(window: dict, hr_ref: float, ref_output: Optional[float]) ->
         "output_at_hr_ref": ratio * hr_ref,
         "hr_at_ref_output": (ref_output / ratio) if ref_output else None,
         "confidence": "low",
+        "method": "ratio",
     }
 
 
@@ -698,7 +818,8 @@ def window_ends(first_day: date, today: date) -> list[date]:
     return out
 
 
-def weekly_windows(points: list[dict], today: date, heat_correction: bool = False) -> list[dict]:
+def weekly_windows(points: list[dict], today: date, heat_correction: bool = False,
+                   unit: Optional[str] = None) -> list[dict]:
     """Points need "date" (date) plus output/hr/temp_c. One fitted window
     per week end, covering the trailing WINDOW_DAYS days."""
     if not points:
@@ -708,7 +829,7 @@ def weekly_windows(points: list[dict], today: date, heat_correction: bool = Fals
     for end in window_ends(first, today):
         start = end - timedelta(days=WINDOW_DAYS - 1)
         inside = [p for p in points if start <= p["date"] <= end]
-        fitted = fit_window(inside, heat_correction=heat_correction)
+        fitted = fit_window(inside, heat_correction=heat_correction, unit=unit)
         if fitted:
             fitted["week_end"] = end.isoformat()
             out.append(fitted)

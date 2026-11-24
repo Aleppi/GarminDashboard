@@ -717,6 +717,11 @@ def _aerobic_series_weeks(rows: list[dict], hr_ref: float, ref_output: Optional[
             "output_at_hr_ref": head["output_at_hr_ref"],
             "hr_at_ref_output": head["hr_at_ref_output"],
             "confidence": head["confidence"],
+            # "regression" or "ratio" (the low-confidence fallback), and
+            # why the fit wasn't trusted when it wasn't.
+            "method": head.get("method"),
+            "fit_issue": r.get("fit_issue"),
+            "slope_bpm_per_unit": _round_or_none(r.get("raw_b"), 3),
             "mean_temp_c": r.get("mean_temp_c"),
             "hot_points": r.get("hot_points"),
         })
@@ -743,6 +748,15 @@ def _durability_session(s: dict) -> dict:
         "first_half": {"output": am.format_output(s["output1"], unit), "hr": _round_or_none(s["hr1"])},
         "second_half": {"output": am.format_output(s["output2"], unit), "hr": _round_or_none(s["hr2"])},
         "temp_c": s.get("temp_c"),
+        # "regression" (per-half HR~output fits read at a common output),
+        # "np_ef" (NP / mean HR per half) or "excluded" (halves not comparable).
+        "method": s.get("method") or "np_ef",
+        "chunks_per_half": [s.get("n_chunks1"), s.get("n_chunks2")],
+        "reference_output": am.format_output(s.get("ref_output"), unit),
+        "hr_at_reference_output": [_round_or_none(s.get("hr1_at_ref")), _round_or_none(s.get("hr2_at_ref"))]
+        if s.get("ref_output") is not None else None,
+        "normalized_output": [am.format_output(s.get("np1"), unit), am.format_output(s.get("np2"), unit)]
+        if s.get("np1") is not None else None,
     }
 
 
@@ -761,8 +775,10 @@ def build_aerobic_history(username: str, series: Optional[str] = None, include_c
     by_series: dict[str, list[dict]] = {}
     for r in weekly_rows:
         by_series.setdefault(r["series"], []).append(r)
-    sessions = store.durability_sessions(username, series)
-    keys = [k for k in am.SERIES if k in by_series or any(s["series"] == k for s in sessions)]
+    all_sessions = store.durability_sessions(username, series, include_excluded=True)
+    sessions = [s for s in all_sessions if s["decoupling_pct"] is not None]
+    excluded = [s for s in all_sessions if s["decoupling_pct"] is None]
+    keys = [k for k in am.SERIES if k in by_series or any(s["series"] == k for s in all_sessions)]
     if series:
         keys = [k for k in keys if k == series]
 
@@ -804,6 +820,8 @@ def build_aerobic_history(username: str, series: Optional[str] = None, include_c
             "change_6w": change,
             "weeks": week_list,
             "durability": [_durability_session(s) for s in sessions if s["series"] == key][:DURABILITY_SESSIONS],
+            # Long sessions whose halves weren't comparable (no score).
+            "durability_excluded": [_durability_session(s) for s in excluded if s["series"] == key][:DURABILITY_SESSIONS],
         }
         if include_chunks:
             entry["chunks"] = [
@@ -822,8 +840,8 @@ def build_aerobic_history(username: str, series: Optional[str] = None, include_c
         "series": out_series,
         "activities_processed": store.processed_summary(username),
         "method": "docs/metrics.md — steady 5-min chunks in the aerobic HR band, robust HR~output fit over a "
-                  "rolling 28 days, evaluated weekly; durability = first-half vs second-half output/HR "
-                  "on sessions >= 90 min without intervals.",
+                  "rolling 28 days, evaluated weekly; durability = first-half vs second-half HR at a common "
+                  "output from per-half chunk regressions (NP/HR fallback) on sessions >= 90 min without intervals.",
     }
 
 
@@ -860,6 +878,8 @@ def build_aerobic(username: Optional[str]) -> Optional[dict]:
                 "ref_output_display": s["ref_output_display"],
                 "hr_at_ref_output": _round_or_none(latest["hr_at_ref_output"]),
                 "confidence": latest["confidence"],
+                "method": latest.get("method"),
+                "fit_issue": latest.get("fit_issue"),
                 "n": latest["n"],
                 "as_of": latest["week_end"],
                 "stale": s["stale"],
@@ -873,7 +893,9 @@ def build_aerobic(username: Optional[str]) -> Optional[dict]:
             })
         if s["durability"]:
             durability.append({"series": s["series"], "label": s["label"], "indoor": s["indoor"],
-                               "last": s["durability"][0], "sessions": s["durability"]})
+                               "last": s["durability"][0], "sessions": s["durability"],
+                               "excluded": [{"date": x["date"], "name": x["name"], "method": "excluded"}
+                                            for x in s["durability_excluded"]]})
 
     # Lead with the series that has the freshest, best-supported data.
     efficiency.sort(key=lambda e: (e["stale"], -(e["n"] or 0)))

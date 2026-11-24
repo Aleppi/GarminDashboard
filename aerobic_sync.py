@@ -195,7 +195,8 @@ def rebuild_weekly(username: str, today: Optional[date] = None) -> None:
         rows = store.chunk_points(username, series)
         for r in rows:
             r["date"] = date.fromisoformat(r["day"])
-        store.replace_weekly(username, series, am.weekly_windows(rows, today, heat_correction=heat))
+        store.replace_weekly(username, series, am.weekly_windows(rows, today, heat_correction=heat,
+                                                                    unit=am.SERIES[series]["unit"]))
         if series not in existing:
             since = (today - timedelta(days=DEFAULT_REF_OUTPUT_DAYS)).isoformat()
             recent = [r["output"] for r in rows if r["day"] >= since] or [r["output"] for r in rows]

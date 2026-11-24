@@ -427,15 +427,23 @@ def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bo
     count. Each week, a robust HR = a + b*output fit over the trailing 28 days
     gives output_at_hr_ref (power, grade-adjusted pace, or walking metabolic
     power at a fixed reference HR — higher = fitter) and hr_at_ref_output
-    (lower = fitter). confidence: high = good fit; medium = fit but
-    extrapolated outside the HR range seen; low = too few/too similar points,
-    median output/HR ratio used instead. Indoor and outdoor are separate
-    series; outdoor weeks carry mean temperature (heat raises HR, so a hot
-    week reads less fit).
+    (lower = fitter). confidence: high = trustworthy fit from >= 15 points
+    with the reference HR inside the HR range seen; medium = trustworthy fit
+    but 8-14 points or extrapolated; low = no trustworthy fit (fit_issue says
+    why: too_few_points, one_session, narrow_output_range (< 15%),
+    slope_out_of_range (bike 0.2-0.6 bpm/W, run 0.15-0.75 bpm per m/min,
+    hike 2.5-12 bpm per W/kg), ...), so method "ratio": the median
+    output/HR ratio scaled to the reference HR. Indoor and outdoor are
+    separate series; outdoor weeks carry mean temperature (heat raises HR,
+    so a hot week reads less fit).
 
-    Durability: sessions >= 90 min moving without intervals (VI < 1.10);
-    decoupling_pct = drop in output/HR from first to second half (after the
-    first 10 min). < 5% strong, 5-8% moderate, > 8% low.
+    Durability: sessions >= 90 min moving without intervals (VI <= 1.10,
+    outdoor rides <= 1.20). method "regression": HR~output fitted on each
+    half's steady chunks (>= 4 per half, overlapping output ranges) and read
+    at a common reference output; decoupling_pct = rise in HR there, as a
+    drop in output per heartbeat. method "np_ef": NP / mean HR per half when
+    the halves' NP differ by <= 10%. Otherwise the session is listed under
+    durability_excluded with no score. < 5% strong, 5-8% moderate, > 8% low.
 
     Args:
         series: one of bike_indoor, bike_outdoor, run_outdoor, run_indoor,

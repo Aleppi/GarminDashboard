@@ -204,13 +204,53 @@ class Model(unittest.TestCase):
 
     def test_linear_relation_recovers_output_at_hr_ref(self):
         rel = lambda w: 60 + 0.44 * w  # noqa: E731
-        pts = self._points(rel, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155])
-        w = am.fit_window(pts)
+        pts = self._points(rel, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155] * 2)
+        w = am.fit_window(pts, unit="W")
         self.assertTrue(w["fit_ok"])
         head = am.window_headline(w, hr_ref=140, ref_output=175)
         self.assertAlmostEqual(head["output_at_hr_ref"], (140 - 60) / 0.44, places=3)
         self.assertAlmostEqual(head["hr_at_ref_output"], rel(175), places=3)
         self.assertEqual(head["confidence"], "high")
+        self.assertEqual(head["method"], "regression")
+
+    def test_8_to_14_points_is_medium(self):
+        pts = self._points(lambda w: 60 + 0.44 * w, [150, 160, 165, 170, 175, 180, 190, 195, 200, 155])
+        w = am.fit_window(pts, unit="W")
+        self.assertTrue(w["fit_ok"])
+        self.assertEqual(am.window_headline(w, 140, 175)["confidence"], "medium")
+
+    def test_implausible_bike_slope_falls_back_to_ratio(self):
+        # b = 0.15 bpm/W (the Nov 2026 outdoor-bike case): HRref - a over b
+        # turns small HR errors into tens of watts. Low + median ratio.
+        pts = self._points(lambda w: 112 + 0.15 * w, [165, 175, 185, 195, 205, 215, 225, 235, 245, 250] * 2)
+        w = am.fit_window(pts, unit="W")
+        self.assertFalse(w["fit_ok"])
+        self.assertEqual(w["fit_issue"], "slope_out_of_range")
+        self.assertAlmostEqual(w["raw_b"], 0.15, places=6)
+        head = am.window_headline(w, 137, 200)
+        self.assertEqual(head["confidence"], "low")
+        self.assertEqual(head["method"], "ratio")
+        self.assertAlmostEqual(head["output_at_hr_ref"], w["ratio"] * 137)
+        # Too steep is just as implausible.
+        steep = self._points(lambda w: 20 + 0.8 * w, [150, 160, 170, 180, 190, 200, 210, 220] * 2)
+        self.assertEqual(am.fit_window(steep, unit="W")["fit_issue"], "slope_out_of_range")
+
+    def test_slope_bounds_per_unit(self):
+        # Running: ~8 bpm per km/h = 0.48 bpm per m/min is plausible...
+        run = self._points(lambda v: 50 + 0.48 * v, [160, 170, 180, 190, 200, 210, 165, 185] * 2)
+        self.assertTrue(am.fit_window(run, unit="m/min")["fit_ok"])
+        # ...but the same numbers read as bpm/W would be fine too, while a
+        # 0.1 bpm per m/min slope isn't.
+        flat = self._points(lambda v: 120 + 0.1 * v, [160, 170, 180, 190, 200, 210, 165, 185] * 2)
+        self.assertEqual(am.fit_window(flat, unit="m/min")["fit_issue"], "slope_out_of_range")
+        hike = self._points(lambda m: 60 + 8 * m, [5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 5.2, 6.8] * 2)
+        self.assertTrue(am.fit_window(hike, unit="W/kg")["fit_ok"])
+
+    def test_output_range_under_15_pct_is_low(self):
+        outs = [190, 195, 200, 205, 210, 192, 198, 202, 208, 196, 204, 200, 194, 206, 199, 201]  # 10% range
+        w = am.fit_window(self._points(lambda w: 60 + 0.4 * w, outs), unit="W")
+        self.assertEqual(w["fit_issue"], "narrow_output_range")
+        self.assertEqual(am.window_headline(w, 140, 200)["confidence"], "low")
 
     def test_robust_to_outlier(self):
         rel = lambda w: 60 + 0.44 * w  # noqa: E731
@@ -299,6 +339,43 @@ class Durability(unittest.TestCase):
         d = am.analyze_activity(details(ride(7200, lambda i: 163, hr)), "virtual_ride", ZONES)["series"]["bike_indoor"]["durability"]
         self.assertAlmostEqual(d["decoupling_pct"], (1 - 130 / 140) * 100, places=3)
         self.assertEqual(d["label"], "moderate")
+        self.assertEqual(d["method"], "regression")
+        self.assertEqual((d["n_chunks1"], d["n_chunks2"]), (11, 11))
+
+    def test_regression_compares_halves_at_common_output(self):
+        # Power alternates 150/200 W in 10-min blocks; HR = 60 + 0.44 P, plus
+        # 5 bpm in the second half. Mean-based EF would also see the power
+        # mix; the per-half fits read at 175 W isolate the 5 bpm drift.
+        half_i = 600 + (7200 - 600) // 2
+        def p(i):
+            return 150 if (i // 600) % 2 == 0 else 200
+        def hr(i):
+            return 60 + 0.44 * p(i) + (5 if i >= half_i else 0)
+        d = am.analyze_activity(details(ride(7200, p, hr)), "virtual_ride", ZONES)["series"]["bike_indoor"]["durability"]
+        self.assertEqual(d["method"], "regression")
+        self.assertAlmostEqual(d["ref_output"], 175, places=6)
+        self.assertAlmostEqual(d["hr1_at_ref"], 137, places=3)
+        self.assertAlmostEqual(d["hr2_at_ref"], 142, places=3)
+        self.assertAlmostEqual(d["decoupling_pct"], (1 - 137 / 142) * 100, places=3)
+
+    def test_np_ef_fallback_without_chunks(self):
+        # HR above LTHR the whole way: no aerobic-band chunks, so NP / HR.
+        def hr(i):
+            return 168 if i < 600 + (7200 - 600) // 2 else 172
+        d = am.analyze_activity(details(ride(7200, lambda i: 230, hr)), "virtual_ride", ZONES)["series"]["bike_indoor"]["durability"]
+        self.assertEqual(d["method"], "np_ef")
+        self.assertEqual(d["n_chunks1"], 0)
+        self.assertAlmostEqual(d["decoupling_pct"], (1 - 168 / 172) * 100, places=2)
+
+    def test_halves_not_comparable_excluded(self):
+        # 150 W then 200 W: chunk ranges don't overlap and NP differs by 33%.
+        half_i = 600 + (7200 - 600) // 2
+        res = am.analyze_activity(details(ride(7200, lambda i: 150 if i < half_i else 200,
+                                               lambda i: 126 if i < half_i else 150)), "virtual_ride", ZONES)
+        s = res["series"]["bike_indoor"]
+        self.assertEqual(s["durability_reason"], "not_comparable")
+        self.assertEqual(s["durability"]["method"], "excluded")
+        self.assertIsNone(s["durability"]["decoupling_pct"])
 
     def test_short_session_not_eligible(self):
         res = am.analyze_activity(details(ride(5000, lambda i: 163, lambda i: 130)), "virtual_ride", ZONES)
@@ -314,6 +391,12 @@ class Durability(unittest.TestCase):
         self.assertTrue(1.10 < vi < 1.15, vi)
         self.assertIsNotNone(am.durability(g, "bike_outdoor")[0])
         self.assertEqual(am.durability(g, "bike_indoor")[1], "variable_output")
+
+    def test_outdoor_bike_vi_limit_is_1_20(self):
+        def vi_ride(hi, lo):
+            return am.resample_1hz(ride(7200, lambda i: hi if (i % 240) < 120 else lo, lambda i: 135))
+        self.assertEqual(am.durability(vi_ride(285, 115), "bike_outdoor")[1], "ok")              # VI ~1.18
+        self.assertEqual(am.durability(vi_ride(300, 100), "bike_outdoor")[1], "variable_output")  # VI ~1.23
 
     def test_coasting_counts_as_moving_time(self):
         # 95 min, with 10 min of coasting in 60 s stretches: pedalling time
