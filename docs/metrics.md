@@ -22,10 +22,10 @@ Both need heart rate. Activities without HR are skipped.
 | Cycling with power, indoor/virtual | Power | W | `bike_indoor` |
 | Cycling **without** power | *excluded*: bike speed depends on wind, drafting and terrain | — | — |
 | Running, outdoor | Grade-adjusted speed (GAS), Minetti | m/min, shown as pace | `run_outdoor` |
-| Running power (watch or pod) | Power, kept separate from GAS | W | `run_power_outdoor` / `_indoor` |
 | Treadmill / indoor run | Speed at grade 0 (Garmin stores no incline) | m/min | `run_indoor` |
 | Walking, hiking, ski touring (outdoor) | Metabolic power, Minetti | W/kg | `walk_outdoor` |
 | Treadmill walking | *excluded*: incline isn't recorded, and walking cost depends on it heavily | — | — |
+| Running power | *not used*: usually Garmin's wrist estimate rather than a measurement; pace covers runs | — | — |
 
 Indoor and outdoor are always **separate series**. Indoors there's no wind or
 weather heat, and trainer/treadmill speed is measured differently from GPS.

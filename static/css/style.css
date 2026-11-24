@@ -301,7 +301,8 @@
   .ae-foot{font-size:11.5px;color:var(--ink-dim);margin-top:8px;line-height:1.55;}
   .ae-foot b{color:var(--ink);font-weight:600;}
   .ae-foot-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;}
-  .ae-pin{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);}
+  .ae-pin{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;}
+  .ae-pin label{color:var(--ink-dim);}
   .ae-pin input{width:58px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:3px;
     font-family:var(--font-mono);font-size:11px;padding:3px 5px;}
   .ae-pin button{background:none;border:1px solid var(--line);border-radius:3px;color:var(--ink-dim);cursor:pointer;

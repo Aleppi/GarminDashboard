@@ -84,17 +84,16 @@ RUN_COST_FLAT = minetti_run_cost(0.0)
 
 
 # ----------------------------------------------------------------- series --
-# One series per sport x signal x indoor/outdoor. Indoor and outdoor never
+# One series per sport x signal x indoor/outdoor, in display order (Run
+# before Bike, matching the VO2 max tiles). Indoor and outdoor never
 # mix: no wind/heat indoors, and treadmill/trainer speed is measured
 # differently from GPS.
 
 SERIES: dict[str, dict[str, Any]] = {
-    "bike_outdoor": {"sport": "cycling", "signal": "power", "indoor": False, "unit": "W", "label": "Bike"},
-    "bike_indoor": {"sport": "cycling", "signal": "power", "indoor": True, "unit": "W", "label": "Bike"},
     "run_outdoor": {"sport": "running", "signal": "gas", "indoor": False, "unit": "m/min", "label": "Run"},
     "run_indoor": {"sport": "running", "signal": "speed", "indoor": True, "unit": "m/min", "label": "Treadmill"},
-    "run_power_outdoor": {"sport": "running", "signal": "power", "indoor": False, "unit": "W", "label": "Run power"},
-    "run_power_indoor": {"sport": "running", "signal": "power", "indoor": True, "unit": "W", "label": "Run power"},
+    "bike_outdoor": {"sport": "cycling", "signal": "power", "indoor": False, "unit": "W", "label": "Bike"},
+    "bike_indoor": {"sport": "cycling", "signal": "power", "indoor": True, "unit": "W", "label": "Bike"},
     "walk_outdoor": {"sport": "walking", "signal": "walk_metab", "indoor": False, "unit": "W/kg", "label": "Hike/Walk"},
 }
 
@@ -124,9 +123,12 @@ def classify_activity(type_key: str, has_power: bool) -> tuple[list[str], Option
             return [], "bike_without_power"
         return (["bike_indoor"] if t in CYCLING_INDOOR_TYPES else ["bike_outdoor"]), None
     if t in RUN_OUTDOOR_TYPES:
-        return ["run_outdoor"] + (["run_power_outdoor"] if has_power else []), None
+        # Running power (Garmin's wrist estimate or a pod) is deliberately not
+        # used: it isn't a measured output for most users, and pace already
+        # covers runs.
+        return ["run_outdoor"], None
     if t in RUN_INDOOR_TYPES:
-        return ["run_indoor"] + (["run_power_indoor"] if has_power else []), None
+        return ["run_indoor"], None
     if t in WALK_OUTDOOR_TYPES:
         return ["walk_outdoor"], None
     if t in WALK_INDOOR_TYPES:

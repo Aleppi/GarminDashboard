@@ -783,6 +783,14 @@
     return Math.round(v) + ' W';
   }
 
+  // Each weekly point is a rolling 28-day window ending on that date.
+  function aeWindowRange(endIso) {
+    const end = new Date(endIso + 'T00:00:00');
+    const start = new Date(end.getTime() - 27 * 86400000);
+    const fmt = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    return fmt(start) + ' – ' + fmt(end);
+  }
+
   function aeQuantity(unit) {
     return unit === 'W' ? 'Power' : (unit === 'm/min' ? 'Pace' : 'Metabolic power');
   }
@@ -1030,20 +1038,26 @@
         (typeof w.hr_at_ref_output === 'number' ? '<br>HR at ' + escapeHtml(fmtAeOutput(s.ref_output, unit)) + ': ' + w.hr_at_ref_output.toFixed(0) + ' bpm' : '') +
         '<br>' + w.n + ' pts · ' + escapeHtml(w.confidence || '') + ' confidence' +
         (typeof w.mean_temp_c === 'number' ? '<br>avg ' + w.mean_temp_c.toFixed(0) + ' °C' + (w.hot_points ? ' (' + w.hot_points + ' hot pts count half)' : '') : '') +
-        '<span class="mc-tip-date">28 days to ' + escapeHtml(fmtShortDate(w.week_end)) + '</span>';
+        '<span class="mc-tip-date">from sessions ' + escapeHtml(aeWindowRange(w.week_end)) + '</span>';
     });
 
     const latest = s.latest || {};
     const refVal = unit === 'm/min' ? fmtAeOutput(s.ref_output, unit).replace('/km', '') :
       (typeof s.ref_output === 'number' ? (unit === 'W/kg' ? s.ref_output.toFixed(2) : Math.round(s.ref_output)) : '');
     const unitHint = unit === 'm/min' ? 'min/km' : unit;
-    let foot = '<div class="ae-foot-row"><span>HR at <b>' + escapeHtml(fmtAeOutput(s.ref_output, unit)) + '</b>: <b>' +
-      (typeof latest.hr_at_ref_output === 'number' ? latest.hr_at_ref_output.toFixed(0) + ' bpm' : '—') + '</b> ' +
+    // The same fit read the other way round: the HR this window predicts at
+    // an output you choose (e.g. your usual Z2 watts). Editable in place.
+    let foot = '<div class="ae-foot-row"><form class="ae-pin" id="aeRefForm"><label>Your HR at ' +
+      '<input id="aeRefInput" type="text" inputmode="decimal" value="' + escapeHtml(String(refVal)) +
+      '" aria-label="Output to check HR at, in ' + unitHint + '"> ' + escapeHtml(unitHint) + '</label>' +
+      '<span>: <b>' + (typeof latest.hr_at_ref_output === 'number' ? latest.hr_at_ref_output.toFixed(0) + ' bpm' : '—') + '</b> ' +
       aeBadge(latest.confidence) + '</span>' +
-      '<form class="ae-pin" id="aeRefForm"><label>Reference <input id="aeRefInput" type="text" inputmode="decimal" value="' +
-      escapeHtml(String(refVal)) + '" aria-label="Reference output in ' + unitHint + '"> ' + escapeHtml(unitHint) + '</label>' +
-      '<button type="submit">Set</button>' + (s.ref_output_pinned ? '<button type="button" id="aeRefReset">Auto</button>' : '') + '</form></div>';
-    foot += '<div class="ae-dim">Lower HR at the same output, or more output at ' + s.hr_ref + ' bpm, means fitter. ' +
+      '<button type="submit">Update</button>' +
+      (s.ref_output_pinned ? '<button type="button" id="aeRefReset" title="Go back to your typical recent output">Auto</button>' : '') +
+      '</form></div>';
+    foot += '<div class="ae-dim">Type any ' + (unit === 'm/min' ? 'pace' : 'output') + ' to see your HR at it' +
+      (s.ref_output_pinned ? '' : ' (default: your typical recent ' + (unit === 'm/min' ? 'pace' : 'output') + ')') + '. ' +
+      'Lower HR at the same output, or more output at ' + s.hr_ref + ' bpm, means fitter. ' +
       (s.indoor ? 'Indoor sessions have no temperature, so heat isn\'t accounted for.'
                 : 'Outdoor points above 25 °C count half (heat raises HR).') +
       ' <span class="ae-key"><i class="ae-dot-k high"></i>high <i class="ae-dot-k medium"></i>medium <i class="ae-dot-k low"></i>low confidence</span></div>';

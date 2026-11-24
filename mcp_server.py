@@ -439,7 +439,7 @@ def get_aerobic_efficiency(series: str = "", weeks: int = 26, include_chunks: bo
 
     Args:
         series: one of bike_indoor, bike_outdoor, run_outdoor, run_indoor,
-            run_power_outdoor, run_power_indoor, walk_outdoor; empty = all.
+            walk_outdoor; empty = all.
         weeks: most recent weekly values to return per series.
         include_chunks: also return every chunk point (date, output, HR, temp).
     """
