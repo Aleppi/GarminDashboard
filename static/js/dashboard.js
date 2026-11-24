@@ -814,6 +814,10 @@
     }
     aerobicSummary = ae;
     const grid = $('aerobicStatGrid');
+    // Static JS is served fresh from disk but the page HTML is cached by the
+    // running app until it restarts — a new script on an old page must not
+    // take the whole dashboard down with it.
+    if (!grid) return;
     if (!ae) { grid.style.display = 'none'; return; }
     grid.style.display = '';
     const pending = ae.status === 'pending';
