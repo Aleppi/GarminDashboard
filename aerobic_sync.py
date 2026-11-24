@@ -132,6 +132,27 @@ def _weather_temp_c(client, activity_id: Any) -> Optional[float]:
     return round((temp_f - 32) * 5 / 9, 1) if isinstance(temp_f, (int, float)) else None
 
 
+def _is_interval_session(client, activity: dict) -> bool:
+    """The dashboard's own interval detection (lap power for rides with power,
+    pace + HR structure for runs) — the same check that labels sessions
+    "interval" elsewhere. Only asked for sessions long enough for Durability,
+    since it can cost an extra Garmin request (laps)."""
+    if (activity.get("movingDuration") or activity.get("duration") or 0) < am.DURABILITY_MIN_MOVING_S:
+        return False
+    import dashboard_data  # local import: heavy module, only needed here
+
+    type_key = (activity.get("activityType") or {}).get("typeKey", "")
+    series, _ = am.classify_activity(type_key, True)
+    sport = am.SERIES[series[0]]["sport"] if series else None
+    if sport not in ("cycling", "running"):
+        return False
+    try:
+        return bool(dashboard_data._has_interval_structure(client, activity, sport))
+    except Exception as exc:  # noqa: BLE001 - no signal means "not shown to be intervals"
+        logger.warning("aerobic: interval check failed for %s: %s", activity.get("activityId"), exc)
+        return False
+
+
 def process_activity(username: str, client, activity: dict, zones: dict[str, dict]) -> str:
     aid = str(activity.get("activityId"))
     type_key = (activity.get("activityType") or {}).get("typeKey", "")
@@ -154,7 +175,7 @@ def process_activity(username: str, client, activity: dict, zones: dict[str, dic
     details = client.get_activity_details(aid, maxchart=DETAILS_MAX_CHART)
     if not details:
         raise GarminUnavailable(f"no details for activity {aid}")  # leave unprocessed; retried next run
-    analysis = am.analyze_activity(details, type_key, zones)
+    analysis = am.analyze_activity(details, type_key, zones, interval_session=_is_interval_session(client, activity))
     temp_c = None
     if any(not am.SERIES[k]["indoor"] for k in analysis.get("series", {})):
         time.sleep(REQUEST_PAUSE_S)
@@ -185,7 +206,10 @@ def rebuild_weekly(username: str, today: Optional[date] = None) -> None:
 
 def sync_user(username: str, days: Optional[int] = None, reprocess: bool = False) -> dict:
     state = store.get_sync_state(username) or {}
-    lookback = days or (INCREMENTAL_DAYS if state.get("backfilled") else BACKFILL_DAYS)
+    # A bumped ALGO_VERSION means the whole cached history needs redoing,
+    # not just the last few days.
+    full = not state.get("backfilled") or store.has_outdated(username, am.ALGO_VERSION)
+    lookback = days or (BACKFILL_DAYS if full else INCREMENTAL_DAYS)
     counts = {"used": 0, "skipped": 0, "failed": 0, "cached": 0}
     try:
         client = garmin_client.get_client(username)

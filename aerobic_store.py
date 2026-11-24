@@ -82,6 +82,11 @@ def processed_ids(username: str, algo_version: int) -> set[str]:
         "SELECT activity_id FROM processed WHERE username = ? AND algo_version >= ?", (username, algo_version))}
 
 
+def has_outdated(username: str, algo_version: int) -> bool:
+    return bool(_rows("SELECT 1 FROM processed WHERE username = ? AND algo_version < ? LIMIT 1",
+                      (username, algo_version)))
+
+
 def save_activity(username: str, activity_id: str, day: str, type_key: str, name: str,
                   analysis: dict, temp_c: Optional[float], algo_version: int) -> None:
     """Replace everything stored for one activity with a fresh analysis."""

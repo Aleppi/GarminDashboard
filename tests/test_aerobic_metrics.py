@@ -304,6 +304,30 @@ class Durability(unittest.TestCase):
         res = am.analyze_activity(details(ride(5000, lambda i: 163, lambda i: 130)), "virtual_ride", ZONES)
         self.assertEqual(res["series"]["bike_indoor"]["durability_reason"], "too_short")
 
+    def test_outdoor_bike_allows_more_variability(self):
+        # Terrain-driven VI ~1.12: steady outdoors, too variable for the trainer.
+        def p(i):
+            return 260 if (i % 240) < 120 else 130
+        samples = ride(7200, p, lambda i: 135)
+        g = am.resample_1hz(samples)
+        vi = am.variability_index([s["power"] for s in samples[600:]])
+        self.assertTrue(1.10 < vi < 1.15, vi)
+        self.assertIsNotNone(am.durability(g, "bike_outdoor")[0])
+        self.assertEqual(am.durability(g, "bike_indoor")[1], "variable_output")
+
+    def test_coasting_counts_as_moving_time(self):
+        # 95 min, with 10 min of coasting in 60 s stretches: pedalling time
+        # is under 90 min but moving time isn't.
+        samples = ride(95 * 60, lambda i: 0 if (i % 570) < 60 else 170, lambda i: 132)
+        d, reason = am.durability(am.resample_1hz(samples), "bike_outdoor")
+        self.assertEqual(reason, "ok")
+
+    def test_interval_session_excluded(self):
+        res = am.analyze_activity(details(ride(7200, lambda i: 163, lambda i: 130)), "virtual_ride", ZONES,
+                                  interval_session=True)
+        self.assertEqual(res["series"]["bike_indoor"]["durability_reason"], "intervals")
+        self.assertTrue(res["series"]["bike_indoor"]["points"])  # steady chunks still count
+
     def test_labels(self):
         self.assertEqual(am.durability_label(4.9), "strong")
         self.assertEqual(am.durability_label(6), "moderate")

@@ -123,11 +123,18 @@ over the last 120 days stands in for HRmax.
 
 ## 4. Durability (aerobic decoupling)
 
-- **Eligible:** ≥ 90 min of moving time, same sport adapters, and **no
-  intervals**: the whole session's VI (NP ÷ average, after the first 10 min)
-  must be < 1.10. Speed-based sports use the same formula on GAS or metabolic
-  power, which is the equivalent limit. Missing HR/output on more than 10 % of
-  the time also disqualifies a session.
+- **Eligible:** ≥ **90 min of moving time**, for rides, runs and hikes alike.
+  Coasting at speed counts as moving; stops and pauses don't.
+- **No intervals**, checked two ways:
+  - The dashboard's own interval detection: lap power for rides with power,
+    pace with HR following it for runs. It catches long steady reps like
+    2×20 min, which have a low VI.
+  - Whole-session variability after the first 10 min: VI (NP ÷ average)
+    **< 1.10**, or **< 1.15 for outdoor rides**. Terrain moves power around
+    even on a steady outdoor ride: hilly steady rides measured 1.10–1.15,
+    against 1.00–1.02 for indoor ERG. Speed-based sports use the same formula
+    on GAS or metabolic power.
+- Missing HR/output on more than 10 % of the time also disqualifies a session.
 - After dropping the first 10 min, the remaining moving time is split into
   two equal halves. `EF = mean output ÷ mean HR` for each half (seconds where
   both are present).
@@ -152,7 +159,7 @@ over the last 120 days stands in for HRmax.
   milliseconds. The dashboard, `/api/aerobic` and the MCP tools only read the
   cache.
 - Changing the method? Bump `ALGO_VERSION` in `aerobic_metrics.py`, and the
-  next sync re-analyses everything.
+  next sync re-analyses each account's full 120 days.
 
 ## 6. Where it shows up
 

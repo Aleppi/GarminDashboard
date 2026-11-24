@@ -25,7 +25,7 @@ from typing import Any, Iterable, Optional
 
 # Bump whenever a change below would alter cached results: the sync job
 # reprocesses every activity whose stored algo_version is older.
-ALGO_VERSION = 1
+ALGO_VERSION = 2  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
 
 WARMUP_S = 600                 # dropped from the start of each activity (HR settling)
 CHUNK_S = 300                  # one data point per 5 min of steady effort
@@ -49,6 +49,10 @@ RUN_STOP_SPEED = 1.0           # m/s
 WALK_STOP_SPEED = 0.3          # m/s — steep hiking can be slow but still moving
 DURABILITY_MIN_MOVING_S = 90 * 60
 DURABILITY_VI_MAX = 1.10       # whole-session variability limit (excludes interval sessions)
+# Outdoor riding varies power with terrain even when steady: hilly but
+# steady rides measured 1.10-1.15, against 1.00-1.02 for indoor ERG.
+DURABILITY_VI_MAX_BY_SERIES = {"bike_outdoor": 1.15}
+MOVING_SPEED = 1.0             # m/s; a coasting rider (zero power) is still moving
 DURABILITY_COVERAGE_MIN = 0.90
 WINDOW_DAYS = 28
 MIN_POINTS_FIT = 8
@@ -305,20 +309,25 @@ def output_signal(grid: Grid, series: str) -> list[Optional[float]]:
     raise ValueError(signal)
 
 
-def _stop_condition(grid: Grid, series: str) -> list[bool]:
+def _stop_condition(grid: Grid, series: str, moving: bool = False) -> list[bool]:
+    """Per second: is the athlete stopped? For power series that means "not
+    pedalling" — unless `moving`, where coasting at speed still counts as
+    moving (that's how the 90-min moving-time rule should see a descent)."""
     signal = SERIES[series]["signal"]
     if signal == "power":
+        if moving:
+            return [not p and (v is None or v < MOVING_SPEED) for p, v in zip(grid.power, grid.speed)]
         return [not p for p in grid.power]
     floor = WALK_STOP_SPEED if SERIES[series]["sport"] == "walking" else RUN_STOP_SPEED
     return [s is None or s < floor for s in grid.speed]
 
 
-def active_seconds(grid: Grid, series: str) -> tuple[list[int], list[bool]]:
+def active_seconds(grid: Grid, series: str, moving: bool = False) -> tuple[list[int], list[bool]]:
     """Indices of seconds that count as moving, plus a parallel flag that's
     True where a stop/pause of >= SEGMENT_BREAK_S precedes that second.
     Zero output only counts as a stop after STOP_MIN_S consecutive
     seconds — a 3 s coast or a stride glitch stays in."""
-    stop = _stop_condition(grid, series)
+    stop = _stop_condition(grid, series, moving=moving)
     n = len(grid)
     stopped = [False] * n
     i = 0
@@ -473,22 +482,27 @@ def durability_label(decoupling_pct: Optional[float]) -> Optional[str]:
     return "low"
 
 
-def durability(grid: Grid, series: str, out: Optional[list[Optional[float]]] = None) -> tuple[Optional[dict], str]:
+def durability(grid: Grid, series: str, out: Optional[list[Optional[float]]] = None,
+               interval_session: bool = False) -> tuple[Optional[dict], str]:
     """First-half vs second-half output per heartbeat for a long, steady-ish
-    session. (result, "ok") or (None, reason)."""
+    session. (result, "ok") or (None, reason). `interval_session` comes from
+    the dashboard's own interval detection (laps/pace structure): long steady
+    reps like 2x20 min have a low VI, so VI alone doesn't catch them."""
     if out is None:
         out = output_signal(grid, series)
-    idx, _ = active_seconds(grid, series)
-    moving_s = len(idx)
+    moving_s = len(active_seconds(grid, series, moving=True)[0])
     if moving_s < DURABILITY_MIN_MOVING_S:
         return None, "too_short"
+    if interval_session:
+        return None, "intervals"
+    idx, _ = active_seconds(grid, series)
     idx = idx[WARMUP_S:]
     both = [(grid.hr[i], out[i]) for i in idx if grid.hr[i] is not None and out[i] is not None]
     if len(both) < DURABILITY_COVERAGE_MIN * len(idx):
         return None, "missing_data"
     outs_all = [out[i] if out[i] is not None else 0.0 for i in idx]
     vi = variability_index(outs_all)
-    if vi is None or vi >= DURABILITY_VI_MAX:
+    if vi is None or vi >= DURABILITY_VI_MAX_BY_SERIES.get(series, DURABILITY_VI_MAX):
         return None, "variable_output"
 
     half = len(idx) // 2
@@ -518,7 +532,7 @@ def durability(grid: Grid, series: str, out: Optional[list[Optional[float]]] = N
 
 # ------------------------------------------------------------- one activity --
 
-def analyze_activity(details: dict, type_key: str, zones: dict[str, dict]) -> dict:
+def analyze_activity(details: dict, type_key: str, zones: dict[str, dict], interval_session: bool = False) -> dict:
     """Everything this module derives from one activity.
 
     `zones` maps a Garmin zone sport ("CYCLING", "RUNNING", "DEFAULT") to
@@ -540,7 +554,7 @@ def analyze_activity(details: dict, type_key: str, zones: dict[str, dict]) -> di
             continue
         out = output_signal(grid, key)
         points, reasons = steady_chunks(grid, key, z["hr_max"], z.get("lthr"), out=out)
-        dur, dur_reason = durability(grid, key, out=out)
+        dur, dur_reason = durability(grid, key, out=out, interval_session=interval_session)
         result["series"][key] = {"points": points, "durability": dur, "durability_reason": dur_reason, "reasons": reasons}
     return result
 
