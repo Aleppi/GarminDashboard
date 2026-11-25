@@ -26,7 +26,7 @@ from typing import Any, Iterable, Optional
 
 # Bump whenever a change below would alter cached results: the sync job
 # reprocesses every activity whose stored algo_version is older.
-ALGO_VERSION = 8  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
+ALGO_VERSION = 9  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
                   # 3: durability by per-half regression (NP-EF fallback), outdoor-bike VI 1.20
                   # 4: outdoor-bike chunk VI 1.10, per-half VI check on NP-EF, ski touring
                   #    (uphill only) and snowshoeing in walk_outdoor
@@ -35,6 +35,7 @@ ALGO_VERSION = 8  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval
                   # 6: HR trend limit 2 bpm/min, walking output CV limit 15%
                   # 7: chunk output = NP for power series; post-effort chunk exclusion
                   # 8: no efficiency chunks from interval sessions (any length)
+                  # 9: drop chunks after a > 10% output drop and in the last 5 min
 
 WARMUP_S = 600                 # dropped from the start of each activity (HR settling)
 CHUNK_S = 300                  # one data point per 5 min of steady effort
@@ -66,6 +67,13 @@ CHUNK_COVERAGE_MIN = 0.95      # share of seconds with both HR and output presen
 # power > POST_EFFORT_FTP_FRAC x FTP (power + FTP known), or HR > LTHR.
 POST_EFFORT_S = 300
 POST_EFFORT_FTP_FRAC = 1.20
+# HR lags a drop in output by minutes, so the chunk after one (typically a
+# cool-down step) pairs the lower output with a still-raised HR. A chunk whose
+# mean output is more than OUTPUT_DROP_MAX below the preceding chunk's (same
+# activity) is dropped, as is any chunk overlapping the last END_EXCLUDE_S of
+# moving time (the cool-down itself).
+OUTPUT_DROP_MAX = 0.10
+END_EXCLUDE_S = 300
 SMOOTH_S = 30                  # rolling window for NP / CV
 GRADE_WINDOW_M = 25.0          # horizontal distance a gradient is measured over
 GRADE_MIN_SPAN_M = 5.0         # below this the athlete is basically stationary: grade 0
@@ -574,6 +582,7 @@ def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
     if out is None:
         out = output_signal(grid, series)
     idx, breaks = active_seconds(grid, series)
+    end_cut = grid.t[idx[-1]] - END_EXCLUDE_S if idx else None
     idx, breaks = idx[WARMUP_S:], breaks[WARMUP_S:]
     band = hr_band(hr_max, lthr, hr_rest=hr_rest, sport=SERIES[series]["sport"])
     signal = SERIES[series]["signal"]
@@ -589,13 +598,22 @@ def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
 
     points: list[dict] = []
     reasons: dict[str, int] = {}
+    prev_out: Optional[float] = None  # mean output of the preceding chunk, valid or not
     for seg in segments:
         run: list[dict] = []
         for c in range(len(seg) // CHUNK_S):
             sl = seg[c * CHUNK_S:(c + 1) * CHUNK_S]
-            point, reason = evaluate_chunk([grid.hr[i] for i in sl], [out[i] for i in sl], signal, band, vi_max, cv_max)
+            outs = [out[i] for i in sl]
+            point, reason = evaluate_chunk([grid.hr[i] for i in sl], outs, signal, band, vi_max, cv_max)
             if point is not None and _after_effort(efforts, grid.t[sl[0]], grid.t[sl[-1]]):
                 point, reason = None, "post_effort"
+            if point is not None and grid.t[sl[-1]] > end_cut:
+                point, reason = None, "activity_end"
+            if point is not None and prev_out and point["avg_output"] < (1 - OUTPUT_DROP_MAX) * prev_out:
+                point, reason = None, "output_drop"
+            present = [o for o in outs if o is not None]
+            if present:
+                prev_out = statistics.fmean(present)
             reasons[reason] = reasons.get(reason, 0) + 1
             if point is not None:
                 point["t_start"] = grid.t[sl[0]]

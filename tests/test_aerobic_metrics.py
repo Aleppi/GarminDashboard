@@ -68,8 +68,9 @@ class SteadyChunks(unittest.TestCase):
     def test_constant_output_and_hr_gives_exact_ef(self):
         res = am.analyze_activity(details(ride(3600, lambda i: 175, lambda i: 137)), "virtual_ride", ZONES)
         pts = res["series"]["bike_indoor"]["points"]
-        # 60 min - 10 min warm-up = 50 min = 10 chunks
-        self.assertEqual(len(pts), 10)
+        # 60 min - 10 min warm-up = 50 min = 10 chunks, minus the last
+        # (overlaps the final 5 min)
+        self.assertEqual(len(pts), 9)
         for p in pts:
             self.assertAlmostEqual(p["output"], 175)
             self.assertAlmostEqual(p["hr"], 137)
@@ -80,7 +81,7 @@ class SteadyChunks(unittest.TestCase):
         res = am.analyze_activity(details(ride(1800, lambda i: 175, lambda i: 90 if i < 600 else 137)),
                                   "virtual_ride", ZONES)
         pts = res["series"]["bike_indoor"]["points"]
-        self.assertEqual(len(pts), 4)
+        self.assertEqual(len(pts), 3)  # 4 chunks, last one in the final 5 min
         self.assertEqual(pts[0]["t_start"], T0 + 600)
 
     def test_pause_removed(self):
@@ -89,8 +90,9 @@ class SteadyChunks(unittest.TestCase):
         grid = am.resample_1hz(samples)
         self.assertEqual(len(grid), 2400)
         pts, _ = am.steady_chunks(grid, "bike_indoor", 186, 166)
-        # 600 s left before the pause (2 chunks), 1200 s after (4 chunks).
-        self.assertEqual(len(pts), 6)
+        # 600 s left before the pause (2 chunks), 1200 s after (4 chunks,
+        # the last of them in the final 5 min).
+        self.assertEqual(len(pts), 5)
         self.assertEqual(pts[2]["t_start"], T0 + 1200 + 300)
 
     def test_zero_power_stop_removed(self):
@@ -199,6 +201,39 @@ class SteadyChunks(unittest.TestCase):
         self.assertNotIn(2100, starts)
         self.assertIn(2400, starts)
 
+    def test_chunk_after_output_drop_dropped(self):
+        # 175 W, then 150 W from 2400 s (-14%); HR stays raised a while. The
+        # first 150 W chunk goes; the next one (no drop vs its predecessor)
+        # stays, as does a -5% step.
+        def p(i):
+            return 175 if i < 2400 else 150 if i < 3900 else 143
+        res = am.analyze_activity(details(ride(5400, p, lambda i: 140)), "virtual_ride", ZONES)["series"]["bike_indoor"]
+        starts = [pt["t_start"] - T0 for pt in res["points"]]
+        self.assertEqual(res["reasons"].get("output_drop"), 1)
+        self.assertNotIn(2400, starts)
+        self.assertIn(2700, starts)
+        self.assertIn(3900, starts)
+
+    def test_drop_measured_against_rejected_chunk_too(self):
+        # The 220 W chunk fails the HR band, but the drop from it still counts.
+        def p(i):
+            return 220 if 1800 <= i < 2100 else 175
+        def hr(i):
+            return 165 if 1800 <= i < 2100 else 140
+        res = am.analyze_activity(details(ride(4800, p, hr)), "virtual_ride", ZONES)["series"]["bike_indoor"]
+        starts = [pt["t_start"] - T0 for pt in res["points"]]
+        self.assertEqual(res["reasons"].get("output_drop"), 1)
+        self.assertNotIn(2100, starts)
+        self.assertIn(2400, starts)
+
+    def test_chunks_in_last_five_minutes_dropped(self):
+        # 4790 s ride: the final 5 min start at 4489. The last chunk
+        # (4200-4499) overlaps them by 10 s and goes; 3900-4199 stays.
+        res = am.analyze_activity(details(ride(4790, lambda i: 175, lambda i: 140)), "virtual_ride", ZONES)["series"]["bike_indoor"]
+        starts = [pt["t_start"] - T0 for pt in res["points"]]
+        self.assertEqual(res["reasons"].get("activity_end"), 1)
+        self.assertEqual(max(starts), 3900)
+
     def test_outdoor_bike_chunk_vi_limit_1_10(self):
         # Rollers: 290/150 W in 50 s swings, chunk VI ~1.09 — steady enough
         # outdoors, not on the trainer.
@@ -232,7 +267,7 @@ class RunAndWalk(unittest.TestCase):
     def test_flat_run_gas_equals_speed(self):
         res = am.analyze_activity(details(run(3600, lambda i: 3.0, lambda i: 145)), "running", ZONES)
         pts = res["series"]["run_outdoor"]["points"]
-        self.assertEqual(len(pts), 10)
+        self.assertEqual(len(pts), 9)
         self.assertAlmostEqual(pts[0]["output"], 180.0, places=3)  # 3 m/s = 180 m/min
 
     def test_uphill_run_gas_faster_than_speed(self):
@@ -248,7 +283,7 @@ class RunAndWalk(unittest.TestCase):
         for s in samples:
             s["alt"] += rnd.uniform(-2, 2)  # baro/GPS jitter on a flat road
         pts = am.analyze_activity(details(samples), "running", ZONES)["series"]["run_outdoor"]["points"]
-        self.assertEqual(len(pts), 10)
+        self.assertEqual(len(pts), 9)
         for p in pts:
             self.assertAlmostEqual(p["output"], 180.0, delta=180 * 0.02)
 
@@ -486,7 +521,7 @@ class Durability(unittest.TestCase):
         self.assertAlmostEqual(d["decoupling_pct"], (1 - 130 / 140) * 100, places=3)
         self.assertEqual(d["label"], "moderate")
         self.assertEqual(d["method"], "regression")
-        self.assertEqual((d["n_chunks1"], d["n_chunks2"]), (11, 11))
+        self.assertEqual((d["n_chunks1"], d["n_chunks2"]), (11, 10))  # last chunk: final 5 min
 
     def test_regression_compares_halves_at_common_output(self):
         # Power alternates 150/200 W in 10-min blocks; HR = 60 + 0.44 P, plus
