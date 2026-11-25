@@ -26,7 +26,7 @@ from typing import Any, Iterable, Optional
 
 # Bump whenever a change below would alter cached results: the sync job
 # reprocesses every activity whose stored algo_version is older.
-ALGO_VERSION = 9  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
+ALGO_VERSION = 10  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval sessions excluded
                   # 3: durability by per-half regression (NP-EF fallback), outdoor-bike VI 1.20
                   # 4: outdoor-bike chunk VI 1.10, per-half VI check on NP-EF, ski touring
                   #    (uphill only) and snowshoeing in walk_outdoor
@@ -36,6 +36,7 @@ ALGO_VERSION = 9  # 2: outdoor-bike VI 1.15, coasting counts as moving, interval
                   # 7: chunk output = NP for power series; post-effort chunk exclusion
                   # 8: no efficiency chunks from interval sessions (any length)
                   # 9: drop chunks after a > 10% output drop and in the last 5 min
+                  # 10: output-drop rule for cycling only
 
 WARMUP_S = 600                 # dropped from the start of each activity (HR settling)
 CHUNK_S = 300                  # one data point per 5 min of steady effort
@@ -72,7 +73,10 @@ POST_EFFORT_FTP_FRAC = 1.20
 # mean output is more than OUTPUT_DROP_MAX below the preceding chunk's (same
 # activity) is dropped, as is any chunk overlapping the last END_EXCLUDE_S of
 # moving time (the cool-down itself).
+# Cycling only: walking/running pace legitimately steps with terrain, and
+# applying it there left too few within-session pairs to fit their slope.
 OUTPUT_DROP_MAX = 0.10
+OUTPUT_DROP_SPORTS = {"cycling"}
 END_EXCLUDE_S = 300
 SMOOTH_S = 30                  # rolling window for NP / CV
 GRADE_WINDOW_M = 25.0          # horizontal distance a gradient is measured over
@@ -609,7 +613,8 @@ def steady_chunks(grid: Grid, series: str, hr_max: float, lthr: Optional[float],
                 point, reason = None, "post_effort"
             if point is not None and grid.t[sl[-1]] > end_cut:
                 point, reason = None, "activity_end"
-            if point is not None and prev_out and point["avg_output"] < (1 - OUTPUT_DROP_MAX) * prev_out:
+            if (point is not None and prev_out and SERIES[series]["sport"] in OUTPUT_DROP_SPORTS
+                    and point["avg_output"] < (1 - OUTPUT_DROP_MAX) * prev_out):
                 point, reason = None, "output_drop"
             present = [o for o in outs if o is not None]
             if present:

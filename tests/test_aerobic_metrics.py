@@ -214,6 +214,13 @@ class SteadyChunks(unittest.TestCase):
         self.assertIn(2700, starts)
         self.assertIn(3900, starts)
 
+    def test_output_drop_rule_cycling_only(self):
+        # Run: 3.3 -> 2.9 m/s (-12%) at 2400 s; the step is kept.
+        res = am.analyze_activity(details(run(4800, lambda i: 3.3 if i < 2400 else 2.9, lambda i: 150)),
+                                  "running", ZONES)["series"]["run_outdoor"]
+        self.assertEqual(res["reasons"].get("output_drop", 0), 0)
+        self.assertIn(2400, [pt["t_start"] - T0 for pt in res["points"]])
+
     def test_drop_measured_against_rejected_chunk_too(self):
         # The 220 W chunk fails the HR band, but the drop from it still counts.
         def p(i):
