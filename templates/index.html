@@ -74,8 +74,8 @@
       </div>
       <div class="ridge-scroll-hint" id="ridgeScrollHint">← scroll to pan · scroll wheel to zoom</div>
       <div class="ridge-legend">
-        <span><i class="swatch" style="background:var(--gold)"></i>CTL — fitness (42d)</span>
-        <span><i class="swatch" style="background:var(--teal);border-top:2px dashed var(--teal);height:0"></i>ATL — fatigue (7d)</span>
+        <span><i class="swatch" style="background:var(--gold)"></i>CTL — chronic load (28d, Garmin)</span>
+        <span><i class="swatch" style="background:var(--teal);border-top:2px dashed var(--teal);height:0"></i>ATL — acute load (7d, Garmin)</span>
         <span id="raceLegend" style="display:none;">🚩 race day</span>
         <span>● today</span>
       </div>
@@ -90,8 +90,8 @@
     <section class="panel">
       <h2>Training Load</h2>
       <div class="stat-grid">
-        <div class="stat-tile"><div class="v gold" id="ctlVal">—</div><div class="l">CTL<span class="help-mark" data-tooltip="Chronic Training Load — a ~42-day rolling average of your training load. Tracks overall fitness: it rises slowly as you build a base and falls slowly when you back off.">?</span></div><div class="d">fitness · 42d</div></div>
-        <div class="stat-tile"><div class="v" id="atlVal">—</div><div class="l">ATL<span class="help-mark" data-tooltip="Acute Training Load — a ~7-day rolling average of your training load. Tracks short-term fatigue: it reacts quickly to a hard week or a rest week.">?</span></div><div class="d">fatigue · 7d</div></div>
+        <div class="stat-tile"><div class="v gold" id="ctlVal">—</div><div class="l">CTL<span class="help-mark" data-tooltip="Garmin's chronic training load — a weighted average of your acute load over the last 28 days. EPOC-based (Firstbeat), straight from Garmin; not a TSS-based 42-day CTL. Tracks your longer-term load: it rises slowly as you build a base and falls slowly when you back off.">?</span></div><div class="d">chronic load · 28d (Garmin)</div></div>
+        <div class="stat-tile"><div class="v" id="atlVal">—</div><div class="l">ATL<span class="help-mark" data-tooltip="Garmin's acute training load — your training load over the last 7 days. EPOC-based (Firstbeat), straight from Garmin; not a TSS-based ATL. Tracks short-term load: it reacts quickly to a hard week or a rest week.">?</span></div><div class="d">acute load · 7d (Garmin)</div></div>
         <div class="stat-tile"><div class="v teal" id="tsbVal">—</div><div class="l">TSB<span class="help-mark" data-tooltip="Training Stress Balance = CTL minus ATL. Positive means you're fresher than your fitness level would suggest (good for racing/hard efforts); negative means fatigue is currently outweighing fitness (typical mid hard-training-block).">?</span></div><div class="d" id="tsbLabel">&nbsp;</div></div>
         <div class="stat-tile"><div class="v" id="acwrVal">—</div><div class="l">ACWR<span class="help-mark" data-tooltip="Acute:Chronic Workload Ratio = ATL divided by CTL. A load-management/injury-risk signal: too high means load has ramped up faster than your fitness base supports; too low means you're training well under what your fitness could handle. Roughly 0.8-1.3 is considered the sweet spot.">?</span></div><div class="d" id="acwrLabel">&nbsp;</div></div>
       </div>

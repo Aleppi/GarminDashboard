@@ -270,7 +270,8 @@ def sync_user(username: str, days: Optional[int] = None, reprocess: bool = False
     state = store.get_sync_state(username) or {}
     # A bumped ALGO_VERSION means the whole cached history needs redoing,
     # not just the last few days.
-    full = not state.get("backfilled") or store.has_outdated(username, am.ALGO_VERSION)
+    since = (date.today() - timedelta(days=BACKFILL_DAYS)).isoformat()
+    full = not state.get("backfilled") or store.has_outdated(username, am.ALGO_VERSION, since)
     lookback = days or (BACKFILL_DAYS if full else INCREMENTAL_DAYS)
     counts = {"used": 0, "skipped": 0, "failed": 0, "cached": 0}
     try:

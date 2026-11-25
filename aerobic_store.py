@@ -116,9 +116,12 @@ def processed_ids(username: str, algo_version: int) -> set[str]:
         "SELECT activity_id FROM processed WHERE username = ? AND algo_version >= ?", (username, algo_version))}
 
 
-def has_outdated(username: str, algo_version: int) -> bool:
-    return bool(_rows("SELECT 1 FROM processed WHERE username = ? AND algo_version < ? LIMIT 1",
-                      (username, algo_version)))
+def has_outdated(username: str, algo_version: int, since_day: Optional[str] = None) -> bool:
+    """Any activity (on or after since_day) cached with an older algorithm.
+    Rows older than the backfill window are never re-fetched, so counting
+    them would force a full backfill on every run."""
+    return bool(_rows("SELECT 1 FROM processed WHERE username = ? AND algo_version < ? AND day >= ? LIMIT 1",
+                      (username, algo_version, since_day or "")))
 
 
 def save_activity(username: str, activity_id: str, day: str, type_key: str, name: str,
